@@ -14,9 +14,10 @@ import com.boox.day.AppDensity
  *
  * - [Regular]: the original layout (calendar month grid + events panel above the page).
  * - [Compact]: the Go 6 "layout B" (a header, a two-week strip and Events/Due boxes above the page;
- *   month grid and lists as popups). **Retired 13 Oct 2026**: every device uses [Regular] again,
- *   and narrow screens adapt sizes only, through [LayoutProfiles.isNarrowScreen]. The Compact code
- *   paths stay until each element has been reviewed and removed one at a time.
+ *   month grid and lists as popups). Retired for tablets on 13 Oct 2026: narrow tablets adapt sizes
+ *   only, through [LayoutProfiles.isNarrowScreen]. Pocket screens (Palma) use it again (Nov 2026)
+ *   with a one-week strip: the calendar switches between that week, the month over the page and
+ *   none (full screen).
  *
  * Fixed per device: the app is portrait-locked and runs at the fixed [AppDensity.dpi], so
  * nothing here changes at runtime. That matters because the Tasks rows (canvas height ÷ 10) and the
@@ -31,10 +32,10 @@ object LayoutProfiles {
     /** Screens narrower than this (in dp at the app density) are pocket screens. */
     private const val POCKET_MAX_WIDTH_DP = 500f
 
-    /** The layout every device uses. */
-    val current: LayoutProfile = LayoutProfile.Regular
+    /** Compact on pocket screens, Regular on every tablet. */
+    val current: LayoutProfile by lazy { if (isPocketScreen) LayoutProfile.Compact else LayoutProfile.Regular }
 
-    /** True only for the retired layout B (see [LayoutProfile]): false on every device now. */
+    /** Layout B (see [LayoutProfile]): pocket screens only. */
     val isCompact: Boolean
         get() = current == LayoutProfile.Compact
 

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -63,9 +64,20 @@ import java.util.Locale
  * Used only when LayoutProfiles.isCompact; the Regular layout does not use this file.
  */
 
+/*
+ * Pocket screens (Palma, Nov 2026): the header's calendar button cycles the one-week strip, the month
+ * in its place ([PocketMonthPanel]) and nothing (full screen; its date line brings the week back).
+ * The month reaches down over the page instead of moving it: the page keeps its height in all three,
+ * so Tasks ink stays on its rows.
+ */
+
 /** Fixed heights of the compact rows (the Tasks canvas height must never change at runtime). */
 object CompactCalendarDimens {
-    val weekStripHeight: Dp = 102.dp     // layout B: weekday letters (14dp) + two weeks (2 × 44dp finger targets)
+    private val weekdayRowHeight: Dp = 14.dp
+    private val weekRowHeight: Dp = 44.dp  // finger target
+
+    /** Weekday letters and [weeks] rows of days (layout B: two weeks, 102 dp). */
+    fun weekStripHeight(weeks: Int): Dp = weekdayRowHeight + weekRowHeight * weeks
     val chipRowHeight: Dp = 56.dp        // Events / Due boxes: 46dp boxes, comfortable for a finger
     val popupTopOffset: Dp = 58.dp       // below the compact header row (53dp buttons + padding)
     val popupHeaderButton: Dp = 52.dp    // Events/Due popup: ‹ › + touch size (Oct 2026, finger-friendly)
@@ -78,9 +90,9 @@ fun compactWindowStart(anchorDate: LocalDate, firstDayOfWeekSetting: AppSettings
 }
 
 /**
- * Two weeks (layout B, Oct 2026): the week containing [anchorDate] and the next one, under one row
- * of single-letter weekdays, with event dots. Tapping a day selects it; the header ‹ › move the
- * window two weeks at a time.
+ * [weeks] weeks (layout B, Oct 2026: two; pocket screens: one): the week containing [anchorDate] and
+ * the next ones, under one row of single-letter weekdays, with event dots. Tapping a day selects it;
+ * the header ‹ › move the window [weeks] weeks at a time.
  */
 @Composable
 fun CompactTwoWeekStrip(
@@ -90,17 +102,18 @@ fun CompactTwoWeekStrip(
     badges: CalendarBadges,
     firstDayOfWeekSetting: AppSettings.FirstDayOfWeek,
     onDateSelected: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    weeks: Int = 2
 ) {
-    val days = remember(anchorDate, firstDayOfWeekSetting) {
+    val days = remember(anchorDate, firstDayOfWeekSetting, weeks) {
         val start = compactWindowStart(anchorDate, firstDayOfWeekSetting)
-        (0L..13L).map { start.plusDays(it) }
+        (0L until weeks * 7L).map { start.plusDays(it) }
     }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .height(CompactCalendarDimens.weekStripHeight)
+            .height(CompactCalendarDimens.weekStripHeight(weeks))
             .padding(horizontal = 6.dp)
     ) {
         Row(
@@ -271,6 +284,165 @@ private fun CompactPreviewBox(label: String, preview: String?, onClick: () -> Un
 }
 
 /**
+ * Pocket screens: the month in place of the week strip, with [agenda] (the selected day's list, as
+ * under the week strip) under it; the page follows below. The header's ‹ › change the month;
+ * tapping a day selects it and the month stays.
+ */
+@Composable
+fun PocketMonthPanel(
+    year: Int,
+    month: Int,
+    selectedDate: String,
+    today: String,
+    badges: CalendarBadges,
+    firstDayOfWeekSetting: AppSettings.FirstDayOfWeek,
+    onDateSelected: (String) -> Unit,
+    agenda: @Composable () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(EInkTheme.Colors.background)
+    ) {
+        DayOfWeekHeader(
+            selectedDate = selectedDate,
+            firstDayOfWeekSetting = firstDayOfWeekSetting,
+            showWeekNumbers = false
+        )
+        CalendarGrid(
+            year = year,
+            month = month,
+            selectedDate = selectedDate,
+            today = today,
+            badges = badges,
+            onDateSelected = onDateSelected,
+            firstDayOfWeekSetting = firstDayOfWeekSetting,
+            showWeekNumbers = false,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(POCKET_MONTH_GRID_HEIGHT)
+        )
+        agenda()
+    }
+}
+
+/**
+ * Pocket screens, under the week strip and the month: the day's events (time, title), then its due
+ * tasks (checkbox, text). Its height is fixed ([POCKET_AGENDA_ROWS] rows, the last one "+N more" when
+ * they don't fit) so the page under the week strip keeps its height, and with it the Tasks rows.
+ */
+@Composable
+fun PocketDayAgenda(
+    events: List<CalendarEvent>,
+    dueToday: List<Task>,
+    overdue: List<Task>,
+    onOpenList: (tab: String) -> Unit
+) {
+    val sorted = remember(events) { events.sortedWith(compareBy({ !it.isAllDay }, { it.startTime })) }
+    val dueTasks = dueToday.map { it to false } + overdue.map { it to true }
+    val slots = if (sorted.size + dueTasks.size > POCKET_AGENDA_ROWS) POCKET_AGENDA_ROWS - 1 else POCKET_AGENDA_ROWS
+    val shownEvents = sorted.take(slots)
+    val shownDue = dueTasks.take(slots - shownEvents.size)
+    val more = sorted.size + dueTasks.size - shownEvents.size - shownDue.size
+    Divider(color = EInkTheme.Colors.borderStrong, thickness = 0.5.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(EInkTheme.Colors.background)
+            .height(POCKET_AGENDA_ROW_HEIGHT * POCKET_AGENDA_ROWS + POCKET_AGENDA_PADDING * 2)
+            .padding(horizontal = 16.dp, vertical = POCKET_AGENDA_PADDING)
+    ) {
+        if (shownEvents.isEmpty() && shownDue.isEmpty()) {
+            Text(
+                text = "Nothing on this day",
+                fontSize = 15.sp,
+                color = EInkTheme.Colors.gray,
+                modifier = Modifier.fillMaxWidth().height(POCKET_AGENDA_ROW_HEIGHT).noRippleClickable { onOpenList("events") }
+            )
+        }
+        shownEvents.forEach { event ->
+            PocketAgendaRow(onClick = { onOpenList("events") }) {
+                Text(
+                    text = pocketEventTime(event),
+                    fontSize = 14.sp,
+                    color = EInkTheme.Colors.gray,
+                    maxLines = 1,
+                    modifier = Modifier.width(POCKET_AGENDA_LEAD_WIDTH)
+                )
+                Text(
+                    text = event.title,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = EInkTheme.Colors.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        shownDue.forEach { (task, isOverdue) ->
+            PocketAgendaRow(onClick = { onOpenList("due") }) {
+                Box(modifier = Modifier.width(POCKET_AGENDA_LEAD_WIDTH)) {
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .border(1.5.dp, EInkTheme.Colors.primary, RoundedCornerShape(2.dp))
+                    )
+                }
+                Text(
+                    text = compactTaskPreview(task),
+                    fontSize = 15.sp,
+                    color = EInkTheme.Colors.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                Text(
+                    text = if (isOverdue) "  · overdue" else "  · due today",
+                    fontSize = 13.sp,
+                    color = EInkTheme.Colors.gray,
+                    maxLines = 1
+                )
+            }
+        }
+        if (more > 0) {
+            PocketAgendaRow(onClick = { onOpenList(if (sorted.size > shownEvents.size) "events" else "due") }) {
+                Text(
+                    text = "+$more more",
+                    fontSize = 14.sp,
+                    color = EInkTheme.Colors.gray,
+                    modifier = Modifier.padding(start = POCKET_AGENDA_LEAD_WIDTH)
+                )
+            }
+        }
+    }
+    Divider(color = EInkTheme.Colors.primary, thickness = 2.dp)
+}
+
+@Composable
+private fun PocketAgendaRow(onClick: () -> Unit, content: @Composable RowScope.() -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(POCKET_AGENDA_ROW_HEIGHT)
+            .noRippleClickable { onClick() },
+        verticalAlignment = Alignment.CenterVertically
+    ) { content() }
+}
+
+private fun pocketEventTime(event: CalendarEvent): String =
+    if (event.isAllDay) "All day"
+    else Instant.ofEpochMilli(event.startTime).atZone(ZoneId.systemDefault()).toLocalTime()
+        .format(DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(Locale.getDefault()))
+
+/** Six week rows of 46 dp, finger-size days on the Palma. */
+private val POCKET_MONTH_GRID_HEIGHT = 276.dp
+private const val POCKET_AGENDA_ROWS = 3
+private val POCKET_AGENDA_PADDING = 6.dp
+private val POCKET_AGENDA_ROW_HEIGHT = 34.dp
+private val POCKET_AGENDA_LEAD_WIDTH = 64.dp
+
+/**
  * Month grid over the page. ‹ › change the shown month; tapping a day selects it and closes.
  */
 @Composable
@@ -389,7 +561,7 @@ fun compactTaskPreview(task: Task): String =
         ?: task.recognizedText?.takeIf { it.isNotBlank() }
         ?: "Handwritten task"
 
-/** Two-week strip + Events/Due boxes (the fixed-height rows above the page; layout B). */
+/** Two-week strip + Events/Due boxes, or [agenda] in place of the boxes (the fixed-height rows above the page; layout B). */
 @Composable
 fun CompactCalendarRows(
     anchorDate: LocalDate,
@@ -402,7 +574,9 @@ fun CompactCalendarRows(
     dueCount: Int,
     duePreview: String?,
     onDateSelected: (String) -> Unit,
-    onOpenList: (tab: String) -> Unit
+    onOpenList: (tab: String) -> Unit,
+    weeks: Int = 2,
+    agenda: (@Composable () -> Unit)? = null
 ) {
     CompactTwoWeekStrip(
         anchorDate = anchorDate,
@@ -410,8 +584,13 @@ fun CompactCalendarRows(
         today = today,
         badges = badges,
         firstDayOfWeekSetting = firstDayOfWeekSetting,
-        onDateSelected = onDateSelected
+        onDateSelected = onDateSelected,
+        weeks = weeks
     )
+    if (agenda != null) {
+        agenda()
+        return
+    }
     CompactPreviewBoxes(
         eventsCount = eventsCount,
         eventsPreview = eventsPreview,

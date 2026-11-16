@@ -7,9 +7,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.material.Divider
+import androidx.compose.material.Icon
 import androidx.compose.material.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ViewWeek
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +38,7 @@ import com.boox.day.editor.EditorTabManager
 import com.boox.day.ui.components.EInkToggle
 import com.boox.day.ui.components.SettingCard
 import com.boox.day.ui.theme.EInkTheme
+import com.boox.day.ui.theme.LayoutProfiles
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
@@ -179,17 +184,30 @@ fun FullScreenDateLine(selectedDate: String) {
             .height(FULL_SCREEN_DATE_LINE_HEIGHT)
             .noRippleClickable { FullScreenState.collapse() }
     ) {
-        Text(
-            text = text,
-            fontSize = EInkTheme.Typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = EInkTheme.Colors.primary,
-            maxLines = 1,
-            modifier = Modifier
-                .weight(1f)
-                .wrapContentHeight(Alignment.CenterVertically)
-                .padding(horizontal = 12.dp)
-        )
+        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = text,
+                fontSize = EInkTheme.Typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = EInkTheme.Colors.primary,
+                maxLines = 1,
+                modifier = Modifier
+                    .weight(1f)
+                    .wrapContentHeight(Alignment.CenterVertically)
+                    .padding(horizontal = 12.dp)
+            )
+            // Pocket screens: tapping the line brings back the week strip
+            if (LayoutProfiles.isPocketScreen) {
+                Icon(
+                    imageVector = Icons.Outlined.ViewWeek,
+                    contentDescription = "Show calendar",
+                    tint = EInkTheme.Colors.primary,
+                    modifier = Modifier
+                        .padding(end = 12.dp)
+                        .size(20.dp)
+                )
+            }
+        }
         Divider(color = EInkTheme.Colors.borderStrong, thickness = 0.5.dp)
     }
 }

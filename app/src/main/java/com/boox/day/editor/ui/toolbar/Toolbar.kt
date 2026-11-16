@@ -68,6 +68,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -1871,7 +1872,11 @@ fun SharedToolbar(
                 // Tab-like Memos/Tasks switcher
                 // Fixed width with internal weight distribution for equal tab sizes
                 // 152dp total = 75dp per tab + 2dp gap between (enlarged for touch ergonomics)
-                Row(
+                if (isPocketToolbar) PocketModeSwitch(
+                    isMemos = currentTab == EditorTab.Memos,
+                    onMemos = { tabManager.switchToMemos(selectedDate, memosPageId) },
+                    onTasks = { tabManager.switchToTasks(selectedDate, tasksPageId) }
+                ) else Row(
                     modifier = Modifier
                         .width(if (isPocketToolbar) POCKET_TAB_TOTAL_WIDTH else EInkTheme.Toolbar.tabTotalWidth)
                         .height(BUTTON_SIZE.dp),
@@ -2025,6 +2030,11 @@ fun SharedToolbar(
                         ToolbarGap(toolGap)
                         if (currentTab == EditorTab.Memos) notesTool() else taskActionsTool()
                     }
+                    if (isPocketToolbar) {
+                        ToolbarGap(toolGap)
+                        undoRedo()
+                        PocketBarSpring()
+                    }
                     if (hasPageNav) ToolbarGap(toolGap)
                     pageNav()
                 }
@@ -2038,8 +2048,10 @@ fun SharedToolbar(
                 // RIGHT SECTION: Edit Controls + Navigation (ultra-compact)
                 // ═══════════════════════════════════════════════════════════════
 
-                ToolbarGap(toolGap)
-                undoRedo()
+                if (!isPocketToolbar) {
+                    ToolbarGap(toolGap)
+                    undoRedo()
+                }
 
                 // Regular bar: page navigation at the end, before ≡ (the compact bar has it beside the tools)
                 if (!isCompactToolbar) {
@@ -2196,7 +2208,51 @@ private fun SplitOutOfSharedToolbar(content: @Composable () -> Unit) {
 @Composable
 private fun RowScope.ToolbarGap(min: Dp) {
     Spacer(Modifier.width(min))
+    // Pocket bar: fixed gaps, the free width is in one place ([PocketBarSpring]) between the tools and the page arrows
+    if (!LayoutProfiles.isPocketScreen) Spacer(Modifier.weight(1f))
+}
+
+/** The pocket bar's free width: tools on the left, page navigation and ≡ on the right. */
+@Composable
+private fun RowScope.PocketBarSpring() {
     Spacer(Modifier.weight(1f))
+}
+
+/**
+ * The pocket bar's Memos | Tasks switch (Palma, Nov 2026): one outlined control, the open tab filled.
+ * A long press switches full screen, as on the tabs.
+ */
+@Composable
+private fun PocketModeSwitch(isMemos: Boolean, onMemos: () -> Unit, onTasks: () -> Unit) {
+    val shape = RoundedCornerShape(POCKET_SWITCH_CORNER)
+    Row(
+        modifier = Modifier
+            .width(POCKET_TAB_TOTAL_WIDTH)
+            .height(POCKET_SWITCH_HEIGHT)
+            .clip(shape)
+            .border(1.5.dp, EInkTheme.Colors.primary, shape)
+    ) {
+        listOf(Triple("Memos", isMemos, onMemos), Triple("Tasks", !isMemos, onTasks)).forEach { (label, open, onClick) ->
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(if (open) EInkTheme.Colors.primary else Color.Transparent)
+                    .noRippleClickable(onLongClick = ::toggleFullScreenFromTab) {
+                        DrawCanvas.toolbarInteraction.tryEmit(Unit)
+                        if (!open) onClick()
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 14.sp,
+                    fontWeight = if (open) FontWeight.Bold else FontWeight.Normal,
+                    color = if (open) EInkTheme.Colors.white else EInkTheme.Colors.primary
+                )
+            }
+        }
+    }
 }
 
 /** Smallest gap between neighbouring controls on the regular toolbar (Go 10.3); the compact bar uses [COMPACT_TOOL_GAP]. */
@@ -2508,8 +2564,10 @@ private val COMPACT_TOOL_GAP = 8.dp
 /** Smallest gap on the pocket bar (Palma), which has 439 dp for the compact bar's fixed controls. */
 private val POCKET_TOOL_GAP = 6.dp
 
-/** Memos/Tasks tabs on the pocket bar (Palma): 56 dp each and the 2 dp gap; the page counts are left out. */
-private val POCKET_TAB_TOTAL_WIDTH = 114.dp
+/** The Memos | Tasks switch on the pocket bar (Palma): 61 dp each; the page counts are left out. */
+private val POCKET_TAB_TOTAL_WIDTH = 122.dp
+private val POCKET_SWITCH_HEIGHT = 36.dp
+private val POCKET_SWITCH_CORNER = 8.dp
 
 /** Which optional tools the compact toolbar shows on the bar (Oct 2026, layout B); the rest go to the toolbar menu (≡). */
 private data class CompactToolbarFit(
@@ -2537,6 +2595,8 @@ private data class CompactToolbarFit(
  * The widths are those of the composables in [Toolbar] — keep them in step when sizes change.
  */
 private fun compactToolbarFit(barWidth: Dp, hasPageNav: Boolean, hasPenSettings: Boolean, isPocket: Boolean): CompactToolbarFit {
+    // Pocket bar (Palma, Nov 2026): only the switch, pen, eraser, undo, page navigation and ≡; the rest is in ≡
+    if (isPocket) return CompactToolbarFit(first = false, second = false, penSettings = false, fullScreen = false)
     val t = EInkTheme.Toolbar
     val gap = if (isPocket) POCKET_TOOL_GAP else COMPACT_TOOL_GAP
     val tabs = if (isPocket) POCKET_TAB_TOTAL_WIDTH else t.tabTotalWidth

@@ -235,7 +235,9 @@ fun MonthHeaderWithToolbar(
     // header buttons move into a ⋮ popup. Regular layout is unchanged when false.
     compact: Boolean = false,
     onMonthTitleClick: () -> Unit = {},
-    onCompactPopupVisibleChange: (Boolean) -> Unit = {}
+    onCompactPopupVisibleChange: (Boolean) -> Unit = {},
+    // Pocket screens (Nov 2026): a tap on today cycles week → month → hidden (CompactCalendar.kt)
+    onPocketCalendarCycle: () -> Unit = {}
 ) {
     var isSettingsMenuOpen by remember { mutableStateOf(false) }
     var isMonthDropdownOpen by remember { mutableStateOf(false) }
@@ -314,7 +316,7 @@ fun MonthHeaderWithToolbar(
 
     // Add event
     val addEventButton: @Composable () -> Unit = {
-        IconButton(onClick = onAddEventClick, modifier = Modifier.size(EInkTheme.Global.touchTarget * LocalHeaderIconScale.current)) {
+        IconButton(onClick = { isOverflowOpen = false; onAddEventClick() }, modifier = Modifier.size(EInkTheme.Global.touchTarget * LocalHeaderIconScale.current)) {
             Icon(
                 imageVector = Icons.Filled.Add,
                 contentDescription = "Add event",
@@ -687,6 +689,9 @@ fun MonthHeaderWithToolbar(
         val headerWidth = with(LocalDensity.current) { context.resources.displayMetrics.widthPixels.toDp() }
         val searchOnBar = headerWidth >= 502.dp
         val syncOnBar = headerWidth >= 565.dp
+        // Pocket screens (Palma, 439 dp): "Nov 2026", narrower gaps and the month button (CompactCalendar.kt)
+        val pocket = LayoutProfiles.isPocketScreen
+        val iconGap = if (pocket) POCKET_HEADER_ICON_GAP else HEADER_ICON_GAP
 
         // Bigger header buttons on compact screens, easier to hit with a finger (Oct 2026)
         CompositionLocalProvider(LocalHeaderIconScale provides HEADER_BAR_ICON_SCALE) {
@@ -699,14 +704,14 @@ fun MonthHeaderWithToolbar(
             IconButton(onClick = onPreviousMonth, modifier = Modifier.size(EInkTheme.Global.touchTarget)) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                    contentDescription = "Previous two weeks",
+                    contentDescription = if (pocket) "Previous" else "Previous two weeks",
                     modifier = Modifier.size(EInkTheme.Global.iconSizeLarge),
                     tint = EInkTheme.Colors.primary
                 )
             }
             // Month title opens the month grid popup
             Text(
-                text = "${monthNames[month]} $year",
+                text = "${if (pocket) monthNames[month].take(3) else monthNames[month]} $year",
                 fontSize = EInkTheme.CalendarToolbar.monthFontSize,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
@@ -717,7 +722,7 @@ fun MonthHeaderWithToolbar(
             IconButton(onClick = onNextMonth, modifier = Modifier.size(EInkTheme.Global.touchTarget)) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "Next two weeks",
+                    contentDescription = if (pocket) "Next" else "Next two weeks",
                     modifier = Modifier.size(EInkTheme.Global.iconSizeLarge),
                     tint = EInkTheme.Colors.primary
                 )
@@ -728,16 +733,43 @@ fun MonthHeaderWithToolbar(
             // A finger-width gap between the icons so one tap never hits two
             if (searchOnBar) {
                 searchButton()
-                Spacer(modifier = Modifier.width(HEADER_ICON_GAP))
+                Spacer(modifier = Modifier.width(iconGap))
             }
             if (syncOnBar) {
                 syncIcon()
-                Spacer(modifier = Modifier.width(HEADER_ICON_GAP))
+                Spacer(modifier = Modifier.width(iconGap))
             }
-            todayButton()
-            Spacer(modifier = Modifier.width(HEADER_ICON_GAP))
-            addEventButton()
-            Spacer(modifier = Modifier.width(HEADER_ICON_GAP))
+            if (pocket) {
+                // Today: a tap cycles the calendar (week, month, hidden), a long press goes to today
+                val buttonSize = EInkTheme.Global.touchTarget * LocalHeaderIconScale.current
+                Box(
+                    modifier = Modifier
+                        .size(buttonSize)
+                        .semantics { contentDescription = "Calendar view; hold for today" }
+                        .noRippleClickable(onLongClick = onTodayClick, onClick = onPocketCalendarCycle),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.calendar_today_thin),
+                        contentDescription = null,
+                        modifier = Modifier.size(EInkTheme.CalendarToolbar.iconSizeStandard * LocalHeaderIconScale.current),
+                        tint = EInkTheme.Colors.primary
+                    )
+                    Text(
+                        text = Calendar.getInstance().get(Calendar.DAY_OF_MONTH).toString(),
+                        fontSize = EInkTheme.Typography.labelSmall * LocalHeaderIconScale.current,
+                        fontWeight = FontWeight.Bold,
+                        color = EInkTheme.Colors.primary,
+                        modifier = Modifier.padding(top = 7.dp * LocalHeaderIconScale.current)
+                    )
+                }
+                Spacer(modifier = Modifier.width(iconGap))
+            } else {
+                todayButton()
+                Spacer(modifier = Modifier.width(iconGap))
+                addEventButton()
+                Spacer(modifier = Modifier.width(iconGap))
+            }
 
             // ⋮ — voice, streak, What's New, settings (+ sync and search when they're not on the bar)
             Box {
@@ -933,8 +965,6 @@ fun MonthHeaderWithToolbar(
         // request; it is the only Today button since DayHeader's shortcut was removed on 15 Oct 2026).
         if (LayoutProfiles.isPocketScreen) {
             todayButton()
-            HeaderGap()
-            addEventButton()
             HeaderGap()
             pocketOverflowButton()
         } else if (LayoutProfiles.isNarrowScreen) {
@@ -1543,6 +1573,9 @@ private fun formatLastSyncTime(timestamp: Long): String {
 
 /** Gap between the compact header's icons (layout B), so a finger tap never lands on two. */
 private val HEADER_ICON_GAP = 10.dp
+
+/** The gap on pocket screens (Palma), where the compact header also has the month button. */
+private val POCKET_HEADER_ICON_GAP = 4.dp
 
 /**
  * Gap between the header's buttons on narrow screens (Go 6, Oct 2026): at least 8 dp plus an equal

@@ -84,6 +84,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -256,6 +258,8 @@ import com.boox.day.ui.calendar.MonthHeaderWithToolbar
 import com.boox.day.ui.calendar.CompactCalendarRows
 import com.boox.day.ui.calendar.CompactDayListPopup
 import com.boox.day.ui.calendar.CompactMonthPopup
+import com.boox.day.ui.calendar.PocketDayAgenda
+import com.boox.day.ui.calendar.PocketMonthPanel
 import com.boox.day.ui.calendar.parseIsoDateOrNull
 import androidx.compose.runtime.SideEffect
 import com.boox.day.ui.theme.LayoutProfiles
@@ -888,6 +892,14 @@ fun MainScreen(
     // A one-week strip + Events/Due chips stay above the page; the month grid and the lists open
     // as popups over it. Fixed per device — Regular screens never enter these paths.
     val isCompactLayout = remember { LayoutProfiles.isCompact }
+    // Weeks in the strip: one on pocket screens (Palma, Nov 2026), whose month opens over the page
+    val compactWeeks = if (LayoutProfiles.isPocketScreen) 1 else 2
+    // Pocket month (Nov 2026): drawn where the week strip starts; the toolbar and page move down below it
+    // by the height it adds, keeping their size (Tasks rows are the page height ÷ 10)
+    var compactRowsTop by remember { mutableStateOf(0f) }
+    var compactRowsHeight by remember { mutableStateOf(0) }
+    var mainBoxTop by remember { mutableStateOf(0f) }
+    var pocketMonthHeight by remember { mutableStateOf(0) }
     var compactWeekAnchor by remember { mutableStateOf(parseIsoDateOrNull(selectedDate) ?: LocalDate.now()) }
     var showCompactMonthPopup by remember { mutableStateOf(false) }
     var showCompactEventsPopup by remember { mutableStateOf(false) }
@@ -941,7 +953,7 @@ fun MainScreen(
         LaunchedEffect(selectedDate) {
             parseIsoDateOrNull(selectedDate)?.let { date ->
                 val windowStart = com.boox.day.ui.calendar.compactWindowStart(compactWeekAnchor, firstDayOfWeek)
-                if (date < windowStart || date > windowStart.plusDays(13)) {
+                if (date < windowStart || date > windowStart.plusDays(compactWeeks * 7L - 1)) {
                     compactWeekAnchor = date
                 }
             }
@@ -951,6 +963,10 @@ fun MainScreen(
             if (compactWeekAnchor.year != currentYear || compactWeekAnchor.monthValue - 1 != currentMonth) {
                 compactWeekAnchor = LocalDate.of(currentYear, currentMonth + 1, 1)
             }
+        }
+        // ...full screen (however it was entered) hides the month, which would keep the pen off...
+        LaunchedEffect(com.boox.day.ui.FullScreenState.isOn) {
+            if (com.boox.day.ui.FullScreenState.isOn) showCompactMonthPopup = false
         }
         // ...and the shown month follows the strip when a week step crosses into another month
         LaunchedEffect(compactWeekAnchor) {
@@ -2159,6 +2175,7 @@ fun MainScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.White)
+                .onGloballyPositioned { mainBoxTop = it.positionInRoot().y }
         ) {
             Column(
                 modifier = Modifier.fillMaxSize()
@@ -2208,10 +2225,14 @@ fun MainScreen(
                         year = currentYear,
                         month = currentMonth,
                         onPreviousMonth = {
-                            if (isCompactLayout) {
+                            if (isCompactLayout && showCompactMonthPopup && LayoutProfiles.isPocketScreen) {
+                                DrawCanvas.flushUIUpdates()
+                                val cal = (viewingCalendar.clone() as Calendar).apply { add(Calendar.MONTH, -1) }
+                                showCompactMonth(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
+                            } else if (isCompactLayout) {
                                 // Layout B: the arrows move the two-week strip (the month follows it)
                                 DrawCanvas.flushUIUpdates()
-                                compactWeekAnchor = compactWeekAnchor.plusWeeks(-2)
+                                compactWeekAnchor = compactWeekAnchor.plusWeeks(-compactWeeks.toLong())
                             } else {
                             // Unfreeze UI while switching months if raw drawing is active
                             DrawCanvas.flushUIUpdates()
@@ -2234,10 +2255,14 @@ fun MainScreen(
                             }
                         },
                         onNextMonth = {
-                            if (isCompactLayout) {
+                            if (isCompactLayout && showCompactMonthPopup && LayoutProfiles.isPocketScreen) {
+                                DrawCanvas.flushUIUpdates()
+                                val cal = (viewingCalendar.clone() as Calendar).apply { add(Calendar.MONTH, 1) }
+                                showCompactMonth(cal.get(Calendar.YEAR), cal.get(Calendar.MONTH))
+                            } else if (isCompactLayout) {
                                 // Layout B: the arrows move the two-week strip (the month follows it)
                                 DrawCanvas.flushUIUpdates()
-                                compactWeekAnchor = compactWeekAnchor.plusWeeks(2)
+                                compactWeekAnchor = compactWeekAnchor.plusWeeks(compactWeeks.toLong())
                             } else {
                             // Unfreeze UI while switching months if raw drawing is active
                             DrawCanvas.flushUIUpdates()
@@ -2366,11 +2391,24 @@ fun MainScreen(
                         accountsToReconnect = multiAccountUiState.allAccounts.count { it.needsReauth }
                     ),
                     compact = isCompactLayout,
-                    onMonthTitleClick = { showCompactMonthPopup = true },
-                    onCompactPopupVisibleChange = { compactHeaderPopupVisible = it }
+                    onMonthTitleClick = { showCompactMonthPopup = !showCompactMonthPopup || !LayoutProfiles.isPocketScreen },
+                    onCompactPopupVisibleChange = { compactHeaderPopupVisible = it },
+                    onPocketCalendarCycle = {
+                        if (showCompactMonthPopup) {
+                            showCompactMonthPopup = false
+                            com.boox.day.ui.FullScreenState.expand()
+                        } else {
+                            showCompactMonthPopup = true
+                        }
+                    }
                 )
 
-                if (isCompactLayout) {
+                if (isCompactLayout) Column(
+                    modifier = Modifier.onGloballyPositioned {
+                        compactRowsTop = it.positionInRoot().y
+                        compactRowsHeight = it.size.height
+                    }
+                ) {
                     CompactCalendarRows(
                         anchorDate = compactWeekAnchor,
                         selectedDate = selectedDate,
@@ -2395,7 +2433,17 @@ fun MainScreen(
                             selectedEventsTab = tab
                             compactEventsListDate = selectedDate
                             showCompactEventsPopup = true
-                        }
+                        },
+                        weeks = compactWeeks,
+                        agenda = if (LayoutProfiles.isPocketScreen) {
+                            {
+                                PocketAgendaForDay(eventsViewModel, selectedDate) { tab ->
+                                    selectedEventsTab = tab
+                                    compactEventsListDate = selectedDate
+                                    showCompactEventsPopup = true
+                                }
+                            }
+                        } else null
                     )
                 }
 
@@ -2595,6 +2643,10 @@ fun MainScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(if (isCompactLayout || com.boox.day.ui.FullScreenState.isOn) 1f else 0.60f)
+                    .offset {
+                        val open = showCompactMonthPopup && LayoutProfiles.isPocketScreen && !com.boox.day.ui.FullScreenState.isOn
+                        IntOffset(0, if (open) (pocketMonthHeight - compactRowsHeight).coerceAtLeast(0) else 0)
+                    }
                     .fullScreenExtraProbe()  // the Memos drag's page height before full screen is opened
             ) {
                 // Full screen: the selected day above the toolbar (the calendar header is hidden)
@@ -3311,6 +3363,36 @@ fun MainScreen(
             }  // Close Column (SharedToolbar + Canvas)
         }
 
+            // Pocket screens (Nov 2026): the month and the day's list in place of the week strip, the page below
+            if (isCompactLayout && showCompactMonthPopup && LayoutProfiles.isPocketScreen && !com.boox.day.ui.FullScreenState.isOn) {
+                SplitOutDialogs {
+                    PocketMonthPanel(
+                        year = currentYear,
+                        month = currentMonth,
+                        selectedDate = selectedDate,
+                        today = today,
+                        badges = CalendarBadges(
+                            datesWithNotes = datesWithNotesSet,
+                            datesWithEvents = datesWithEvents,
+                            datesWithBooxNotes = datesWithBooxNotes,
+                            datesWithTasks = datesWithTasks
+                        ),
+                        firstDayOfWeekSetting = firstDayOfWeek,
+                        onDateSelected = { date -> if (date != selectedDate) selectedDate = date },
+                        agenda = {
+                            PocketAgendaForDay(eventsViewModel, selectedDate) { tab ->
+                                selectedEventsTab = tab
+                                compactEventsListDate = selectedDate
+                                showCompactEventsPopup = true
+                            }
+                        },
+                        modifier = Modifier
+                            .offset { IntOffset(0, (compactRowsTop - mainBoxTop).roundToInt()) }
+                            .onSizeChanged { pocketMonthHeight = it.height }
+                    )
+                }
+            }
+
             // ========== EXPANDED EVENTS PANEL ==========
             // Expands from events area downward into canvas (not full screen)
             // Note: Dismissal is handled by CalendarGrid's onDateSelected callback
@@ -3403,7 +3485,7 @@ fun MainScreen(
         // ========== DIALOGS ==========
 
         // Compact layout popups (plan Phase 1.5): month grid and Events/Due list over the page
-        if (isCompactLayout && showCompactMonthPopup) {
+        if (isCompactLayout && showCompactMonthPopup && !LayoutProfiles.isPocketScreen) {
             CompactMonthPopup(
                 year = currentYear,
                 month = currentMonth,
@@ -9012,4 +9094,17 @@ private fun EventsPanelTabButton(
             softWrap = false
         )
     }
+}
+
+/** Pocket screens: [PocketDayAgenda] for [date], under the week strip and the month. */
+@Composable
+private fun PocketAgendaForDay(eventsViewModel: EventsViewModel, date: String, onOpenList: (tab: String) -> Unit) {
+    val events by remember(date) { eventsViewModel.getEventsForDate(date) }.collectAsState(initial = emptyList())
+    val due by remember(date, LocalDate.now()) { eventsViewModel.getDueTasksForDate(date) }.collectAsState(initial = null)
+    PocketDayAgenda(
+        events = events,
+        dueToday = due?.dueTodayTasks.orEmpty(),
+        overdue = due?.overdueTasks.orEmpty(),
+        onOpenList = onOpenList
+    )
 }
