@@ -27,9 +27,13 @@ BooxDay is free and open source under the [GNU General Public License v3.0](LICE
 
 ## Screenshots
 
+Taken on the BOOX Palma layout: the week (or the month) with the day's events and due tasks, and the page below.
+
 | Memos | Tasks |
 |---|---|
 | ![Memos page](docs/images/memos.png) | ![Tasks page](docs/images/tasks.png) |
+| **Month** | **Events and due tasks** |
+| ![Month view](docs/images/month.png) | ![Events and due tasks](docs/images/events.png) |
 | **Task card** | **Toolbar menu** |
 | ![Task card](docs/images/task-card.png) | ![Toolbar menu](docs/images/toolbar-menu.png) |
 

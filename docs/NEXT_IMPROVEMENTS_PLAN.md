@@ -284,7 +284,7 @@ Confirmed by reading the code at `d8df4cc`, unless labelled. A second pass check
 - `ui/dialogs/HelpDialog.kt`: 13 sections, text only.
 - `tips/TipsRepository.kt`: 89 tips by context.
 - README: features, requirements, install. Its Android claim is "Android 10 or later". It lists tested tablets but not the Note Max.
-- There is no changelog file: GitHub release notes serve as the changelog. Five pictures in `docs/images/`.
+- There is no changelog file: GitHub release notes serve as the changelog. Seven pictures in `docs/images/`.
 - Website: homepage feature cards and lists, a "What's new" card, FAQ, privacy page. Its AI list and calendar lines need updates as features ship.
 
 ---
