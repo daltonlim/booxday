@@ -416,7 +416,7 @@ fun PocketDayAgenda(
             }
         }
     }
-    Divider(color = EInkTheme.Colors.primary, thickness = 2.dp)
+    Divider(color = EInkTheme.Colors.borderStrong, thickness = 1.dp)
 }
 
 @Composable

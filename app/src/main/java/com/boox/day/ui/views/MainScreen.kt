@@ -2634,7 +2634,8 @@ fun MainScreen(
                 }
             }
 
-            Divider(color = EInkTheme.Colors.borderStrong, thickness = 0.5.dp)
+            // Pocket screens: the day's agenda above ends with the line over the toolbar
+            if (!LayoutProfiles.isPocketScreen) Divider(color = EInkTheme.Colors.borderStrong, thickness = 0.5.dp)
             }  // end CalendarSection
 
             // Drawing Canvas Area (60% of total; the whole screen in full screen)

@@ -1202,7 +1202,7 @@ fun SharedToolbar(
                     .background(EInkTheme.Toolbar.background)
                     .height(BUTTON_SIZE.dp)
                     .fillMaxWidth()
-                    .padding(horizontal = 1.dp),  // Minimal padding for maximum space
+                    .padding(horizontal = if (isPocketToolbar) 3.dp else 1.dp),  // Minimal padding for maximum space
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // ═══════════════════════════════════════════════════════════════
@@ -1243,7 +1243,8 @@ fun SharedToolbar(
                         onActivate = { activeButton = "draw" },  // Highlight button on tap
                         onMenuOpenChange = { activeState.isDrawing = !it },
                         modifier = Modifier.size(EInkTheme.Toolbar.buttonSizeLarge),  // Enlarged for touch ergonomics
-                        isActive = activeButton == "draw"
+                        isActive = activeButton == "draw",
+                        pocketBar = isPocketToolbar
                     )
                 }
 
@@ -1294,7 +1295,8 @@ fun SharedToolbar(
                         },
                         onMenuOpenChange = { activeState.isDrawing = !it },
                         modifier = Modifier.size(EInkTheme.Toolbar.buttonSizeMedium),  // Enlarged for touch
-                        isActive = activeButton == "erase"
+                        isActive = activeButton == "erase",
+                        pocketBar = isPocketToolbar
                     )
                 }
 
@@ -1656,7 +1658,8 @@ fun SharedToolbar(
                         },
                         iconId = R.drawable.undo_40px,
                         contentDescription = "undo",
-                        iconPadding = 4
+                        iconPadding = 4,
+                        pocketBar = isPocketToolbar
                     )
 
                     if (!isPocketToolbar) {
@@ -2033,7 +2036,6 @@ fun SharedToolbar(
                     if (isPocketToolbar) {
                         ToolbarGap(toolGap)
                         undoRedo()
-                        PocketBarSpring()
                     }
                     if (hasPageNav) ToolbarGap(toolGap)
                     pageNav()
@@ -2107,7 +2109,8 @@ fun SharedToolbar(
                         // Larger than the other tools: it's at the screen edge and opens everything else
                         modifier = Modifier.size(EInkTheme.Toolbar.buttonSizeLarge),
                         iconSize = MENU_BUTTON_ICON_SIZE,
-                        iconPadding = 4
+                        iconPadding = 4,
+                        pocketBar = isPocketToolbar
                     )
                     // The menu's tools are worked out only while it is open
                     if (activeState.menuStates.isMenuOpen) {
@@ -2163,7 +2166,7 @@ fun SharedToolbar(
                 Modifier
                     .fillMaxWidth()
                     .height(1.dp)
-                    .background(EInkTheme.Colors.primary)
+                    .background(if (isPocketToolbar) EInkTheme.Colors.borderStrong else EInkTheme.Colors.primary)
             )
         }
 
@@ -2208,13 +2211,6 @@ private fun SplitOutOfSharedToolbar(content: @Composable () -> Unit) {
 @Composable
 private fun RowScope.ToolbarGap(min: Dp) {
     Spacer(Modifier.width(min))
-    // Pocket bar: fixed gaps, the free width is in one place ([PocketBarSpring]) between the tools and the page arrows
-    if (!LayoutProfiles.isPocketScreen) Spacer(Modifier.weight(1f))
-}
-
-/** The pocket bar's free width: tools on the left, page navigation and ≡ on the right. */
-@Composable
-private fun RowScope.PocketBarSpring() {
     Spacer(Modifier.weight(1f))
 }
 
@@ -2230,7 +2226,7 @@ private fun PocketModeSwitch(isMemos: Boolean, onMemos: () -> Unit, onTasks: () 
             .width(POCKET_TAB_TOTAL_WIDTH)
             .height(POCKET_SWITCH_HEIGHT)
             .clip(shape)
-            .border(1.5.dp, EInkTheme.Colors.primary, shape)
+            .border(1.dp, EInkTheme.Colors.primary, shape)
     ) {
         listOf(Triple("Memos", isMemos, onMemos), Triple("Tasks", !isMemos, onTasks)).forEach { (label, open, onClick) ->
             Box(
@@ -2565,9 +2561,9 @@ private val COMPACT_TOOL_GAP = 8.dp
 private val POCKET_TOOL_GAP = 6.dp
 
 /** The Memos | Tasks switch on the pocket bar (Palma): 61 dp each; the page counts are left out. */
-private val POCKET_TAB_TOTAL_WIDTH = 122.dp
-private val POCKET_SWITCH_HEIGHT = 36.dp
-private val POCKET_SWITCH_CORNER = 8.dp
+private val POCKET_TAB_TOTAL_WIDTH = 116.dp
+private val POCKET_SWITCH_HEIGHT = 32.dp
+private val POCKET_SWITCH_CORNER = 16.dp
 
 /** Which optional tools the compact toolbar shows on the bar (Oct 2026, layout B); the rest go to the toolbar menu (≡). */
 private data class CompactToolbarFit(

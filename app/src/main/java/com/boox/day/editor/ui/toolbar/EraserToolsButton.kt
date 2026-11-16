@@ -58,7 +58,8 @@ fun EraserToolsButton(
     onScribbleToggle: (Boolean) -> Unit,
     onMenuOpenChange: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
-    isActive: Boolean = false
+    isActive: Boolean = false,
+    pocketBar: Boolean = false
 ) {
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
@@ -90,7 +91,8 @@ fun EraserToolsButton(
             },
             hasDropdown = true,
             contentDescription = "Eraser tools",
-            iconPadding = 10  // Increased padding for smaller icon appearance
+            iconPadding = 10,  // Increased padding for smaller icon appearance
+            pocketBar = pocketBar
         )
 
         if (showMenu) {

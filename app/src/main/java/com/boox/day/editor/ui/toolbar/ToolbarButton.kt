@@ -30,6 +30,10 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import com.boox.day.R
 import com.boox.day.ui.theme.EInkTheme
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 
 /**
  * Size scale for toolbar buttons and their icons. The compact toolbar's "…" popup provides a larger
@@ -51,27 +55,34 @@ fun ToolbarButton(
     hasDropdown: Boolean = false,
     contentDescription: String = "",
     iconPadding: Int = 8,  // Default padding (8dp), increase to make icon smaller
-    iconSize: Dp = EInkTheme.Toolbar.iconSize  // Default icon size, override for mini toolbars
+    iconSize: Dp = EInkTheme.Toolbar.iconSize,  // Default icon size, override for mini toolbars
+    pocketBar: Boolean = false  // On the pocket (Palma) bar: one button and icon size, a bar under the selected tool
 ) {
     // Track press state for visual feedback (E-Ink friendly: instant color inversion, no ripple)
     val interactionSource = remember { MutableInteractionSource() }
     val scale = LocalToolbarIconScale.current
     val isPressed by interactionSource.collectIsPressedAsState()
 
+    // Pocket bar (Palma, Nov 2026): the selected tool has a bar under it instead of the inverted
+    // fill; a press still inverts
+    val selectedBar = pocketBar && isSelected && !isPressed && enabled
+    val inverted = isPressed || (isSelected && !selectedBar)
+
     // Disabled: no selection, grayed out icon
     // Unselected: transparent background, icon tinted with penColor (or black)
     // Pressed/Selected: filled background with penColor (or black), white icon (inverted selection)
     val bgColor = when {
         !enabled -> EInkTheme.Toolbar.buttonBackground
-        isPressed || isSelected -> (penColor ?: EInkTheme.Selection.background)
+        inverted -> (penColor ?: EInkTheme.Selection.background)
         else -> EInkTheme.Toolbar.buttonBackground
     }
     val tint = when {
         !enabled -> EInkTheme.Toolbar.iconColorDisabled
-        isPressed || isSelected -> EInkTheme.Selection.foreground
+        inverted -> EInkTheme.Selection.foreground
         penColor != null -> penColor
         else -> EInkTheme.Toolbar.iconColor
     }
+    val barColor = penColor ?: EInkTheme.Selection.background
 
     // If this button is configured with a special placeholder text and no icon,
     // use the standard undo icon so mini toolbars can share the same visual
@@ -83,7 +94,8 @@ fun ToolbarButton(
     }
 
     Box(
-        modifier
+        (if (pocketBar) Modifier.size(POCKET_BUTTON_SIZE) else Modifier)
+            .then(modifier)
             .then(Modifier.size(EInkTheme.Toolbar.buttonSize * scale))  // Default size, but passed modifier's size takes precedence
             .alpha(if (enabled) 1f else 0.35f)  // More obvious disabled state
             .clickable(
@@ -94,7 +106,19 @@ fun ToolbarButton(
             .background(
                 color = bgColor, shape = RoundedCornerShape(EInkTheme.ModernDialog.PrimaryButton.cornerRadius)
             )
-            .padding(iconPadding.dp),
+            .drawBehind {
+                if (selectedBar) {
+                    val barWidth = SELECTED_BAR_WIDTH.toPx()
+                    val barHeight = SELECTED_BAR_HEIGHT.toPx()
+                    drawRoundRect(
+                        color = barColor,
+                        topLeft = Offset((size.width - barWidth) / 2, size.height - barHeight),
+                        size = Size(barWidth, barHeight),
+                        cornerRadius = CornerRadius(barHeight / 2)
+                    )
+                }
+            }
+            .padding(if (pocketBar) POCKET_ICON_PADDING else iconPadding.dp),
         contentAlignment = Alignment.Center
     ) {
         when {
@@ -102,7 +126,7 @@ fun ToolbarButton(
                 Icon(
                     painterResource(effectiveIconId),
                     contentDescription,
-                    modifier = Modifier.size(iconSize * scale),
+                    modifier = if (pocketBar) Modifier.fillMaxSize() else Modifier.size(iconSize * scale),
                     tint = tint
                 )
             }
@@ -111,7 +135,7 @@ fun ToolbarButton(
                 Icon(
                     vectorIcon,
                     contentDescription,
-                    modifier = Modifier.size(iconSize * scale),
+                    modifier = if (pocketBar) Modifier.fillMaxSize() else Modifier.size(iconSize * scale),
                     tint = tint
                 )
             }
@@ -120,28 +144,28 @@ fun ToolbarButton(
                 Icon(
                     imageVector,
                     contentDescription,
-                    modifier = Modifier.size(iconSize * scale),
-                    tint = if (isPressed || isSelected) EInkTheme.Selection.foreground else EInkTheme.Toolbar.iconColor
+                    modifier = if (pocketBar) Modifier.fillMaxSize() else Modifier.size(iconSize * scale),
+                    tint = if (inverted) EInkTheme.Selection.foreground else EInkTheme.Toolbar.iconColor
                 )
             }
             text != null -> {
                 Text(
                     text,
                     fontSize = 20.sp,
-                    color = if (isPressed || isSelected) EInkTheme.Selection.foreground else EInkTheme.Toolbar.iconColor
+                    color = if (inverted) EInkTheme.Selection.foreground else EInkTheme.Toolbar.iconColor
                 )
             }
         }
 
-        // Dropdown indicator triangle in bottom-right corner
-        if (hasDropdown) {
+        // Dropdown indicator triangle in bottom-right corner; not on the pocket bar (tap the selected tool again)
+        if (hasDropdown && !pocketBar) {
             Canvas(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .offset(x = 2.dp, y = 4.dp)
                     .size(6.dp)
             ) {
-                val triangleColor = if (isPressed || isSelected) EInkTheme.Selection.foreground else EInkTheme.Colors.darkGray
+                val triangleColor = if (inverted) EInkTheme.Selection.foreground else EInkTheme.Colors.darkGray
                 val path = Path().apply {
                     moveTo(size.width, 0f)           // top-right
                     lineTo(size.width, size.height)  // bottom-right
@@ -153,3 +177,8 @@ fun ToolbarButton(
         }
     }
 }
+
+private val POCKET_BUTTON_SIZE = 44.dp
+private val POCKET_ICON_PADDING = 9.dp
+private val SELECTED_BAR_WIDTH = 24.dp
+private val SELECTED_BAR_HEIGHT = 3.dp

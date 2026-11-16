@@ -60,7 +60,8 @@ fun DrawingToolsButton(
     onActivate: () -> Unit = {},  // Called on every tap to highlight button
     onMenuOpenChange: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier,
-    isActive: Boolean = false
+    isActive: Boolean = false,
+    pocketBar: Boolean = false
 ) {
     val context = LocalContext.current
     var showMenu by remember { mutableStateOf(false) }
@@ -97,7 +98,8 @@ fun DrawingToolsButton(
                 }
             },
             hasDropdown = true,
-            contentDescription = "Drawing tools"
+            contentDescription = "Drawing tools",
+            pocketBar = pocketBar
         )
 
         if (showMenu) {
