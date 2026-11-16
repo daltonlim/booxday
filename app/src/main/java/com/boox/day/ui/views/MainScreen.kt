@@ -259,6 +259,9 @@ import com.boox.day.ui.calendar.CompactCalendarRows
 import com.boox.day.ui.calendar.CompactDayListPopup
 import com.boox.day.ui.calendar.CompactMonthPopup
 import com.boox.day.ui.calendar.PocketDayAgenda
+import com.boox.day.ui.calendar.PocketDueRow
+import com.boox.day.ui.calendar.PocketEventRow
+import com.boox.day.ui.calendar.PocketSegments
 import com.boox.day.ui.calendar.PocketMonthPanel
 import com.boox.day.ui.calendar.parseIsoDateOrNull
 import androidx.compose.runtime.SideEffect
@@ -8316,6 +8319,8 @@ private fun ExpandedEventsList(
         }
     }
 
+    // The pocket Events/Due popup (Palma, Nov 2026): a switch for the tabs, and no footer (the header has Close)
+    val pocket = LayoutProfiles.isPocketScreen && !showPinButton
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -8324,7 +8329,7 @@ private fun ExpandedEventsList(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(start = 10.dp, end = 7.dp, top = 8.dp, bottom = 4.dp)
+                .padding(start = if (pocket) 12.dp else 10.dp, end = if (pocket) 12.dp else 7.dp, top = 8.dp, bottom = 4.dp)
         ) {
             // Header row with tabs and date/filter icons
             Row(
@@ -8338,7 +8343,12 @@ private fun ExpandedEventsList(
                 // CRITICAL: Uses same EventsPanelTabs as collapsed panel for consistency
                 // Compact (the Go 6 Events/Due popup, Oct 2026): finger-size tabs and filter icons
                 val fingerSizeHeader = LayoutProfiles.isCompact
-                EventsPanelTabs(
+                if (pocket) PocketSegments(
+                    labels = listOf("Events  ${sortedEvents.size}", "Due  ${dueTasksData.totalCount}"),
+                    selected = if (selectedEventsTab == "due") 1 else 0,
+                    onSelect = { onTabSelected(if (it == 1) "due" else "events") },
+                    modifier = Modifier.weight(1f)
+                ) else EventsPanelTabs(
                     selectedTab = selectedEventsTab,
                     onTabSelected = onTabSelected,
                     eventsCount = sortedEvents.size,
@@ -8348,6 +8358,7 @@ private fun ExpandedEventsList(
                 // Right side: Filter icons (when connected accounts) OR Date label (standalone mode)
                 val showFilterIcons = (hasGoogleAccount || hasOutlookAccount || hasCalDavAccount) && selectedEventsTab == "events"
                 if (showFilterIcons) {
+                    if (pocket) Spacer(modifier = Modifier.width(8.dp))
                     // Source filter icons
                     CalendarSourceFilterControl(
                         filter = sourceFilter,
@@ -8417,7 +8428,21 @@ private fun ExpandedEventsList(
                                 // NEW: Note badge info
                                 val noteCount = eventNoteCounts[event.id] ?: 0
                                 val hasAttention = eventsWithAttention.contains(event.id)
-                                EventItem(
+                                if (pocket) PocketEventRow(
+                                    event = event,
+                                    isPast = isPast,
+                                    onClick = { onEventClick(event) },
+                                    onNoteClick = linkedNoteId?.let { noteId ->
+                                        {
+                                            if (noteCount > 1) {
+                                                notesPopupEventId = event.id
+                                                notesPopupY = 0f
+                                            } else {
+                                                com.boox.day.ui.dialogs.BooxNotesPlaces.openNote(noteId)
+                                            }
+                                        }
+                                    }
+                                ) else EventItem(
                                     event = event,
                                     selectedDate = selectedDate,
                                     linkedNoteId = linkedNoteId,
@@ -8478,7 +8503,14 @@ private fun ExpandedEventsList(
                             // Due Today section
                             val dueTodayTotal = dueTasksData.dueTodayTasks.size
                             val overdueTotal = dueTasksData.overdueTasks.size
-                            if (dueTodayTotal > 0) {
+                            if (pocket) {
+                                items(dueTasksData.overdueTasks) { task ->
+                                    PocketDueRow(task = task, isOverdue = true, onClick = { onDueTaskClick?.invoke(task) })
+                                }
+                                items(dueTasksData.dueTodayTasks) { task ->
+                                    PocketDueRow(task = task, isOverdue = false, onClick = { onDueTaskClick?.invoke(task) })
+                                }
+                            } else if (dueTodayTotal > 0) {
                                 item {
                                     DueTaskSectionHeader(title = "Due Today", count = dueTodayTotal)
                                 }
@@ -8487,7 +8519,7 @@ private fun ExpandedEventsList(
                                 }
                             }
                             // Overdue section
-                            if (overdueTotal > 0) {
+                            if (!pocket && overdueTotal > 0) {
                                 if (dueTodayTotal > 0) {
                                     item { Spacer(Modifier.height(8.dp)) }
                                 }
@@ -8504,9 +8536,9 @@ private fun ExpandedEventsList(
             }
 
             // Footer with pin icon (left), event count (center), and collapse icon (right)
-            Divider(color = EInkTheme.Colors.dividerHairline, thickness = 1.dp)
+            if (!pocket) Divider(color = EInkTheme.Colors.dividerHairline, thickness = 1.dp)
 
-            Row(
+            if (!pocket) Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp, horizontal = 8.dp),
