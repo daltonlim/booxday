@@ -6187,10 +6187,10 @@ private fun PersistentCanvasHost(
         //          See memory.md Section 12.1 for full documentation.
         // ============================================================================
         ResizeHiddenPageInPlace(memosPage.value, isActive = currentTab == EditorTab.Memos, surfaceSize = surfaceSize)
+        val latestOnMemosPageChanged by rememberUpdatedState(onMemosPageChanged)
         LaunchedEffect(memosPageId, width, height) {
             val currentPage = memosPage.value
             val currentState = memosState.value
-        val latestOnMemosPageChanged by rememberUpdatedState(onMemosPageChanged)
             val currentHistory = memosHistory.value
             val currentControl = memosControlTower.value
 
