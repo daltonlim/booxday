@@ -43,9 +43,10 @@ import kotlinx.coroutines.withContext
 
 /**
  * Auto-saved images (Nov 2026): with [AutoImageSettings.notes] or [AutoImageSettings.tasks] on, the memo page
- * edited last and today's to-do list are saved as full-screen PNG files in [AutoImageFolder] every time they change.
+ * opened last (else the one edited last) and today's to-do list are saved as full-screen PNG files in [AutoImageFolder] every time they change.
  *
  * When they are saved, always in an [AutoImageWorker] so it also happens with the app closed:
+ * - a moment after another memo page is opened ([memoOpened]),
  * - a few seconds after the day's data changes, or [AutoImageSettings.inkDelaySeconds] after the pen rests ([DayDataWatcher]),
  * - just after midnight (the new day's pages replace yesterday's),
  * - right away when a setting changes.
@@ -68,6 +69,10 @@ object AutoImages {
     private const val TASKS_PREFIX = "todo-page-"
     private const val TASKS_LIST = "todo-list.png"
     private const val QUIET_MS = 5_000L
+
+    /** Wait after a memo page is opened, so scrolling through memos saves only the one it stops on. */
+    private const val OPENED_DELAY_MS = 2_000L
+    private const val KEY_OPENED_MEMO = "opened_memo"
 
     /** Ink too far from a row to count as written in it; the app's own rule decides inside. */
     private const val MIN_TASKS_GEOMETRY_PX = 10f
@@ -106,9 +111,18 @@ object AutoImages {
         }
     }
 
-    fun requestSave(context: Context, force: Boolean = false) {
+    /** The Memos canvas shows [pageId]: memo.png becomes that page. */
+    fun memoOpened(context: Context, pageId: String) {
+        val prefs = prefs(context)
+        if (prefs.getString(KEY_OPENED_MEMO, null) == pageId) return
+        prefs.edit().putString(KEY_OPENED_MEMO, pageId).apply()
+        if (settings(context).notes) requestSave(context, delayMs = OPENED_DELAY_MS)
+    }
+
+    fun requestSave(context: Context, force: Boolean = false, delayMs: Long = 0L) {
         val request = OneTimeWorkRequestBuilder<AutoImageWorker>()
             .setInputData(workDataOf(AutoImageWorker.KEY_FORCE to force))
+            .setInitialDelay(delayMs, TimeUnit.MILLISECONDS)
             .build()
         WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(WORK_NOW, ExistingWorkPolicy.REPLACE, request)
     }
@@ -128,7 +142,7 @@ object AutoImages {
             var written = 0
             try {
                 if (choice.notes) {
-                    lastEditedMemoImage(app, width, height)?.let { image ->
+                    (openedMemoImage(app, width, height) ?: lastEditedMemoImage(app, width, height))?.let { image ->
                         keep += MEMO_FILE
                         if (save(app, MEMO_FILE, image, choice, force)) written++
                     }
@@ -165,6 +179,14 @@ object AutoImages {
     internal fun isOurImage(name: String): Boolean =
         name == MEMO_FILE || name == TASKS_LIST ||
             (name.endsWith(".png") && (name.startsWith(OLD_NOTES_PREFIX) || name.startsWith(TASKS_PREFIX)))
+
+    /** The memo page opened last, the size of the screen; null when it's gone or has nothing on it. */
+    private suspend fun openedMemoImage(context: Context, width: Int, height: Int): Bitmap? {
+        val pageId = prefs(context).getString(KEY_OPENED_MEMO, null) ?: return null
+        if (AppDatabase.getDatabase(context).dayPageDao().getDateByPageId(pageId) == null) return null
+        val image = AutoImageRenderer.memoPage(context, MemoPageContent.load(context, pageId), width, height) ?: return null
+        return toScreen(image, width, height)
+    }
 
     /**
      * The memo page edited last, on any day, the size of the screen; null when no memo page has anything on it.

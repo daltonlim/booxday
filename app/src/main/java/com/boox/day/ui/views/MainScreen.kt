@@ -260,6 +260,7 @@ import com.boox.day.ui.calendar.CompactDayListPopup
 import com.boox.day.ui.calendar.CompactMonthPopup
 import com.boox.day.ui.calendar.PocketDayAgenda
 import com.boox.day.ui.calendar.PocketDueRow
+import com.boox.day.autoimage.AutoImages
 import com.boox.day.ui.calendar.PocketEventRow
 import com.boox.day.ui.calendar.PocketSegments
 import com.boox.day.ui.calendar.PocketMonthPanel
@@ -6259,6 +6260,9 @@ private fun PersistentCanvasHost(
             val readyHistory = memosHistory.value!!
             
             // Register canvas with tab manager (only needs to happen once per instance)
+            LaunchedEffect(readyState.currentPageId) {
+                withContext(Dispatchers.IO) { AutoImages.memoOpened(context, readyState.currentPageId) }
+            }
             DisposableEffect(readyState) {
                 tabManager.registerMemosCanvas(readyState, readyControl)
                 onDispose {
