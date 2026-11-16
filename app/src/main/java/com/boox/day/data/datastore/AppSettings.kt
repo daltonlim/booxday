@@ -3,6 +3,7 @@ package com.boox.day.data.datastore
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.boox.day.autoimage.AutoImageSettings
 import kotlinx.serialization.Serializable
 
 
@@ -206,6 +207,9 @@ data class AppSettings(
 
     /** A Markdown note for each day, written by itself (Oct 2026, export/DailyNotes). Off until turned on. */
     val dailyNotesEnabled: Boolean = false,
+
+    /** Today's memo pages and to-do list saved as images on every change (Nov 2026, autoimage/AutoImages). */
+    val autoImages: AutoImageSettings = AutoImageSettings(),
 
     /** The app opens in full screen (Nov 2026, ui/FullScreenState); Back or the date line still leaves it. */
     val openInFullScreen: Boolean = false,

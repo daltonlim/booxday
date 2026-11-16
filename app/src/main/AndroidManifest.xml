@@ -26,6 +26,9 @@
     <!-- In-app updates (Oct 2026): installs a newer release from GitHub (update/AppUpdateInstaller) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Auto-saved images as the home screen wallpaper (autoimage/AutoImages) -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+
     <!-- Phase 3 (Oct 2026): permissions merged in from libraries that the app never uses -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" tools:node="remove" />
     <uses-permission android:name="android.permission.DUMP" tools:node="remove" />

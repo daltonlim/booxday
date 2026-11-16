@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import com.boox.day.ai.TaskAiContextBuilderV1
+import com.boox.day.autoimage.AutoImages
 import com.boox.day.data.datastore.AppSettings
 import com.boox.day.data.db.AppDatabase
 import com.boox.day.data.db.CalendarEventRepository
@@ -94,6 +95,8 @@ class BooxDayApp : Application() {
         runSafeStartupStep("Sleep screen agenda") { com.boox.day.sleepscreen.SleepAgenda.onAppStart(this, applicationScope) }
         // Markdown daily notes, when turned on (export/DailyNotes)
         runSafeStartupStep("Daily notes") { com.boox.day.export.DailyNotes.onAppStart(this, applicationScope) }
+        // Memo pages and to-do list saved as images, when turned on (autoimage/AutoImages)
+        runSafeStartupStep("Auto-save images") { AutoImages.onAppStart(this, applicationScope) }
     }
 
     /**
