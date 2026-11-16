@@ -3153,6 +3153,7 @@ fun MainScreen(
                         tasksPageId = currentTaskPageId!!,
                         tasks = currentTasks,
                         taskPageInfo = currentTaskPageInfo,
+                        onMemosPageChanged = { currentPageId = it },
                         memosIsLoading = isMemosPageLoading,
                         tasksIsLoading = isTasksPageLoading,
                         onToggleTaskCompleted = { task ->
@@ -6060,6 +6061,9 @@ private fun PersistentCanvasHost(
     tasksPageId: String,
     tasks: List<Task>,
     taskPageInfo: TaskPageInfo?,
+    // The page the Memos editor moved to by itself (‹ ›, a new page): keeps memosPageId current, or the
+    // next resize (full screen, the pocket month) would take the editor back to the old page
+    onMemosPageChanged: (String) -> Unit,
     memosIsLoading: Boolean,
     tasksIsLoading: Boolean,
     onToggleTaskCompleted: (Task) -> Unit,
@@ -6186,6 +6190,7 @@ private fun PersistentCanvasHost(
         LaunchedEffect(memosPageId, width, height) {
             val currentPage = memosPage.value
             val currentState = memosState.value
+        val latestOnMemosPageChanged by rememberUpdatedState(onMemosPageChanged)
             val currentHistory = memosHistory.value
             val currentControl = memosControlTower.value
 
@@ -6228,7 +6233,7 @@ private fun PersistentCanvasHost(
                     pageId = memosPageId,
                     pageView = page,
                     appRepository = appRepository,
-                    onPageChange = { }
+                    onPageChange = { latestOnMemosPageChanged(it) }
                 ).apply {
                     refreshDayPageInfo()
                     hasInternalToolbar = false
