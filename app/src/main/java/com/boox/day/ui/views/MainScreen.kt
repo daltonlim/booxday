@@ -2208,6 +2208,8 @@ fun MainScreen(
                 // Jump to today (the Today button in the top bar)
                 val goToToday: () -> Unit = {
                     selectedDate = today
+                    // The week strip too: with today already selected, a week step left it elsewhere
+                    compactWeekAnchor = LocalDate.now()
                     viewingCalendar = Calendar.getInstance()
                     if (isSignedIn || hasAnyExternalAccount) {
                         if (hasAnyExternalAccount) {
