@@ -76,7 +76,9 @@ import java.util.Locale
 
 /** Fixed heights of the compact rows (the Tasks canvas height must never change at runtime). */
 object CompactCalendarDimens {
-    private val weekdayRowHeight: Dp = 14.dp
+    /** Pocket screens (Palma) leave air above and below the letters. */
+    val weekdayRowHeight: Dp get() = if (LayoutProfiles.isPocketScreen) 24.dp else 14.dp
+    val weekdayTopPadding: Dp get() = if (LayoutProfiles.isPocketScreen) 6.dp else 0.dp
     private val weekRowHeight: Dp = 44.dp  // finger target
 
     /** Weekday letters and [weeks] rows of days (layout B: two weeks, 102 dp). */
@@ -124,7 +126,8 @@ fun CompactTwoWeekStrip(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(14.dp),
+                .height(CompactCalendarDimens.weekdayRowHeight)
+                .padding(top = CompactCalendarDimens.weekdayTopPadding),
             verticalAlignment = Alignment.CenterVertically
         ) {
             days.take(7).forEach { day ->
@@ -174,52 +177,49 @@ private fun CompactDayCell(
     val dateString = day.toString()  // ISO yyyy-MM-dd (locale independent)
     val isSelected = dateString == selectedDate
     val isToday = dateString == today
-    Column(
-        modifier = modifier
-            .padding(horizontal = 2.dp, vertical = 2.dp)
-            .background(
-                if (isSelected) EInkTheme.Colors.primary else EInkTheme.Colors.background,
-                RoundedCornerShape(EInkTheme.Global.cornerRadius)
-            )
+    Box(
+        modifier = modifier.noRippleClickable { onDateSelected(dateString) },
+        contentAlignment = Alignment.Center
+    ) {
+    Box(
+        modifier = Modifier
+            .size(DAY_CIRCLE_SIZE)
+            .background(if (isSelected) EInkTheme.Colors.primary else EInkTheme.Colors.background, CircleShape)
             .then(
                 if (isToday && !isSelected) {
-                    Modifier.border(
-                        EInkTheme.Global.borderWidth,
-                        EInkTheme.Colors.primary,
-                        RoundedCornerShape(EInkTheme.Global.cornerRadius)
-                    )
+                    Modifier.border(EInkTheme.Global.borderWidth, EInkTheme.Colors.primary, CircleShape)
                 } else Modifier
-            )
-            .noRippleClickable { onDateSelected(dateString) },
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            ),
+        contentAlignment = Alignment.Center
     ) {
         val textColor = when {
             isSelected -> EInkTheme.Colors.white
             isOtherMonth -> EInkTheme.CalendarGrid.dayColorOutsideMonth
             else -> EInkTheme.Colors.primary
         }
+        // The number in the circle's centre, the event dot under it near the circle's edge
         Text(
             text = day.dayOfMonth.toString(),
-            fontSize = 17.sp,
+            fontSize = 16.sp,
             fontWeight = if (isToday || isSelected) FontWeight.Bold else FontWeight.Normal,
             color = textColor
         )
-        // Event dot (space kept when empty so dates don't shift)
-        Box(
-            modifier = Modifier
-                .padding(top = 1.dp)
-                .size(4.dp)
-                .background(
-                    if (dateString in badges.datesWithEvents) textColor else Color0,
-                    CircleShape
-                )
-        )
+        if (dateString in badges.datesWithEvents) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = DAY_DOT_BOTTOM)
+                    .size(4.dp)
+                    .background(textColor, CircleShape)
+            )
+        }
+    }
     }
 }
 
-/** Transparent fill for the empty event-dot slot. */
-private val Color0 = androidx.compose.ui.graphics.Color.Transparent
+/** The selected day's filled circle and today's ring, inside the 44 dp week row. */
+private val DAY_CIRCLE_SIZE = 38.dp
+private val DAY_DOT_BOTTOM = 4.dp
 
 /**
  * "Events n · first event" and "Due n · first task" (layout B, Oct 2026): two one-line boxes side by

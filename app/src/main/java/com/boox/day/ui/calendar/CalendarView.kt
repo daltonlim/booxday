@@ -29,6 +29,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.Divider
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.Text
@@ -695,12 +699,28 @@ fun MonthHeaderWithToolbar(
 
         // Bigger header buttons on compact screens, easier to hit with a finger (Oct 2026)
         CompositionLocalProvider(LocalHeaderIconScale provides HEADER_BAR_ICON_SCALE) {
+        Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 4.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (pocket) {
+                // Pocket (Nov 2026): "November 2026" on the left, the year in gray; ‹ › paired at the right
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(monthNames[month]) }
+                        withStyle(SpanStyle(color = EInkTheme.Colors.gray)) { append(" $year") }
+                    },
+                    fontSize = POCKET_TITLE_FONT_SIZE,
+                    color = EInkTheme.Colors.primary,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .noRippleClickable { onMonthTitleClick() }
+                        .padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 8.dp)
+                )
+            } else {
             IconButton(onClick = onPreviousMonth, modifier = Modifier.size(EInkTheme.Global.touchTarget)) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
@@ -727,6 +747,7 @@ fun MonthHeaderWithToolbar(
                     tint = EInkTheme.Colors.primary
                 )
             }
+            }
 
             Spacer(modifier = Modifier.weight(1f))
 
@@ -740,6 +761,8 @@ fun MonthHeaderWithToolbar(
                 Spacer(modifier = Modifier.width(iconGap))
             }
             if (pocket) {
+                PocketMonthArrows(onPreviousMonth = onPreviousMonth, onNextMonth = onNextMonth)
+                Spacer(modifier = Modifier.width(iconGap))
                 // Today: a tap cycles the calendar (week, month, hidden), a long press goes to today
                 val buttonSize = EInkTheme.Global.touchTarget * LocalHeaderIconScale.current
                 Box(
@@ -752,15 +775,15 @@ fun MonthHeaderWithToolbar(
                     Icon(
                         painter = painterResource(R.drawable.calendar_today_thin),
                         contentDescription = null,
-                        modifier = Modifier.size(EInkTheme.CalendarToolbar.iconSizeStandard * LocalHeaderIconScale.current),
+                        modifier = Modifier.size(EInkTheme.CalendarToolbar.iconSizeStandard),
                         tint = EInkTheme.Colors.primary
                     )
                     Text(
                         text = Calendar.getInstance().get(Calendar.DAY_OF_MONTH).toString(),
-                        fontSize = EInkTheme.Typography.labelSmall * LocalHeaderIconScale.current,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = EInkTheme.Typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
                         color = EInkTheme.Colors.primary,
-                        modifier = Modifier.padding(top = 7.dp * LocalHeaderIconScale.current)
+                        modifier = Modifier.padding(top = 6.dp)
                     )
                 }
                 Spacer(modifier = Modifier.width(iconGap))
@@ -780,7 +803,7 @@ fun MonthHeaderWithToolbar(
                     Icon(
                         imageVector = Icons.Filled.MoreVert,
                         contentDescription = "More",
-                        modifier = Modifier.size(EInkTheme.CalendarToolbar.iconSizeStandard * LocalHeaderIconScale.current),
+                        modifier = Modifier.size(EInkTheme.CalendarToolbar.iconSizeStandard * if (pocket) 1f else LocalHeaderIconScale.current),
                         tint = EInkTheme.Colors.primary
                     )
                 }
@@ -788,7 +811,16 @@ fun MonthHeaderWithToolbar(
                 val overflowBadgeCount = attention.count
                 val overflowNeedsAttention = overflowBadgeCount > 0 ||
                     (!syncOnBar && isSignedIn && (hasSyncError || pendingSyncCount > 0))
-                if (overflowNeedsAttention) {
+                if (overflowNeedsAttention && pocket) {
+                    // Pocket: a dot inside the button, never cut by the screen edge
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 13.dp, end = 15.dp)
+                            .size(POCKET_BADGE_DOT_SIZE)
+                            .background(EInkTheme.Colors.primary, CircleShape)
+                    )
+                } else if (overflowNeedsAttention) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.TopEnd)
@@ -849,6 +881,8 @@ fun MonthHeaderWithToolbar(
                     }
                 }
             }
+        }
+        if (pocket) Divider(color = EInkTheme.Colors.borderStrong, thickness = 0.5.dp)
         }
         }
     } else Row(
@@ -1585,6 +1619,46 @@ private val POCKET_HEADER_ICON_GAP = 4.dp
 private fun RowScope.HeaderGap() {
     Spacer(modifier = Modifier.width(8.dp))
     Spacer(modifier = Modifier.weight(1f))
+}
+
+/** Pocket header: the month title, ‹ › paired in one outlined pill, and the ⋮ attention dot. */
+private val POCKET_TITLE_FONT_SIZE = 22.sp
+private val POCKET_ARROWS_HEIGHT = 36.dp
+private val POCKET_ARROW_WIDTH = 44.dp
+private val POCKET_BADGE_DOT_SIZE = 8.dp
+
+@Composable
+private fun PocketMonthArrows(onPreviousMonth: () -> Unit, onNextMonth: () -> Unit) {
+    val shape = RoundedCornerShape(POCKET_ARROWS_HEIGHT / 2)
+    Row(
+        modifier = Modifier
+            .height(POCKET_ARROWS_HEIGHT)
+            .clip(shape)
+            .border(1.dp, EInkTheme.Colors.borderStrong, shape),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .width(POCKET_ARROW_WIDTH)
+                .fillMaxHeight()
+                .semantics { contentDescription = "Previous" }
+                .noRippleClickable { onPreviousMonth() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, null, Modifier.size(26.dp), EInkTheme.Colors.primary)
+        }
+        Box(modifier = Modifier.width(0.5.dp).height(POCKET_ARROWS_HEIGHT / 2).background(EInkTheme.Colors.borderStrong))
+        Box(
+            modifier = Modifier
+                .width(POCKET_ARROW_WIDTH)
+                .fillMaxHeight()
+                .semantics { contentDescription = "Next" }
+                .noRippleClickable { onNextMonth() },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, Modifier.size(26.dp), EInkTheme.Colors.primary)
+        }
+    }
 }
 
 /** Compact header button size relative to the 44dp touch target: on the bar and in the ⋮ popup. */
