@@ -207,6 +207,9 @@ data class AppSettings(
     /** A Markdown note for each day, written by itself (Oct 2026, export/DailyNotes). Off until turned on. */
     val dailyNotesEnabled: Boolean = false,
 
+    /** The app opens in full screen (Nov 2026, ui/FullScreenState); Back or the date line still leaves it. */
+    val openInFullScreen: Boolean = false,
+
     // What the sleep screen shows
     val sleepScreenContent: com.boox.day.sleepscreen.SleepScreenContent = com.boox.day.sleepscreen.SleepScreenContent(),
 

@@ -13,8 +13,9 @@ import kotlinx.coroutines.sync.withLock
 
 /**
  * Full screen (Oct 2026): the toolbar and canvas take the whole screen and the calendar section is
- * hidden; Memos and Tasks share it. It lasts for the session only: the app always opens in the
- * normal layout. Compose state like [AiKeyGate], so the toolbar, MainScreen and the canvas host read
+ * hidden; Memos and Tasks share it. It lasts for the session only: the app opens in the normal layout,
+ * or in full screen with AppSettings.openInFullScreen ([expandAtStart], Nov 2026).
+ * Compose state like [AiKeyGate], so the toolbar, MainScreen and the canvas host read
  * it directly instead of passing it through MainScreen's root lambda (at the JVM method-size limit).
  *
  * The canvas grows downward from the same top-left corner, so Memos ink keeps its place; ink written
@@ -53,7 +54,16 @@ object FullScreenState {
     // One switch at a time, in order: a collapse asked for during the Tasks reflow waits for it
     private val switching = Mutex()
 
+    /** Once per launch: leaving full screen, or the activity being recreated, doesn't bring it back. */
+    private var expandedAtStart = false
+
     fun toggle() = if (isOn) collapse() else expand()
+
+    fun expandAtStart() {
+        if (expandedAtStart) return
+        expandedAtStart = true
+        expand()
+    }
 
     fun expand() {
         if (isOn || transitioning) return

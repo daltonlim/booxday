@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
 import android.widget.Toast
+import com.boox.day.ui.OpenInFullScreenSetting
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -343,6 +344,8 @@ fun PreferencesDialog(
 
                         // A Markdown note for each day (Oct 2026, export/DailyNotes)
                         com.boox.day.export.DailyNotesSetting()
+
+                        OpenInFullScreenSetting()
 
                         // Tasks kept in step with Google Tasks (Oct 2026, tasksync/; builds with task sync only)
                         com.boox.day.ui.components.TaskSyncSetting(

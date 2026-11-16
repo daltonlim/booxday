@@ -1,7 +1,9 @@
 package com.boox.day.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -25,8 +27,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.boox.day.data.datastore.GlobalAppSettings
+import com.boox.day.data.db.KvProxy
 import com.boox.day.editor.DrawCanvas
 import com.boox.day.editor.EditorTabManager
+import com.boox.day.ui.components.EInkToggle
+import com.boox.day.ui.components.SettingCard
 import com.boox.day.ui.theme.EInkTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -92,6 +98,13 @@ fun FullScreenEffects(tabManager: EditorTabManager, onEnter: () -> Unit) {
         onDispose { FullScreenState.beforeChange = null }
     }
 
+    LaunchedEffect(Unit) {
+        if (!GlobalAppSettings.current.openInFullScreen) return@LaunchedEffect
+        DrawCanvas.surfaceSize.first { it != null }
+        delay(SURFACE_SETTLE_MS)
+        FullScreenState.expandAtStart()
+    }
+
     val currentOnEnter = rememberUpdatedState(onEnter)
     var shownState by remember { mutableStateOf(isOn) }
     val context = LocalContext.current
@@ -112,6 +125,37 @@ fun FullScreenEffects(tabManager: EditorTabManager, onEnter: () -> Unit) {
         delay(SURFACE_SETTLE_MS)
         DrawCanvas.forceUpdate.emit(null)
         if (!isOn) DrawCanvas.forceUnfreeze()
+    }
+}
+
+/** Preferences card: open the app in full screen (Nov 2026, AppSettings.openInFullScreen). */
+@Composable
+fun OpenInFullScreenSetting() {
+    val context = LocalContext.current
+    var enabled by remember { mutableStateOf(GlobalAppSettings.current.openInFullScreen) }
+    SettingCard(
+        title = "Open in full screen",
+        description = "Memos and Tasks take the whole screen when the app opens. Back, or tapping the date " +
+            "above the toolbar, shows the calendar again."
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (enabled) "Opens in full screen" else "Opens in the normal view",
+                fontSize = EInkTheme.Typography.bodyMedium,
+                color = EInkTheme.Colors.darkGray
+            )
+            EInkToggle(
+                checked = enabled,
+                onCheckedChange = { on ->
+                    enabled = on
+                    KvProxy(context).setAppSettings(GlobalAppSettings.current.copy(openInFullScreen = on))
+                }
+            )
+        }
     }
 }
 
