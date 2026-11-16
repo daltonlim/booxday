@@ -439,8 +439,14 @@ fun SharedToolbar(
     // Narrow screens keep every control at touch size and move what doesn't fit into the
     // toolbar menu (≡)
     val isCompactToolbar = remember { LayoutProfiles.isNarrowScreen }
+    // Pocket screens (Palma): narrower tabs, slim page arrows and redo in the toolbar menu (≡)
+    val isPocketToolbar = remember { LayoutProfiles.isPocketScreen }
     // Smallest gap between neighbouring controls on the bar (see ToolbarGap)
-    val toolGap = if (isCompactToolbar) COMPACT_TOOL_GAP else REGULAR_TOOL_GAP
+    val toolGap = when {
+        isPocketToolbar -> POCKET_TOOL_GAP
+        isCompactToolbar -> COMPACT_TOOL_GAP
+        else -> REGULAR_TOOL_GAP
+    }
     val isToolbarModalBlockingCanvas by remember {
         derivedStateOf {
             isImagePickerOpen ||
@@ -1652,20 +1658,22 @@ fun SharedToolbar(
                         iconPadding = 4
                     )
 
-                    ToolbarGap(toolGap)
+                    if (!isPocketToolbar) {
+                        ToolbarGap(toolGap)
 
-                    // Redo (48dp with reduced padding for larger icon)
-                    ToolbarButton(
-                        modifier = Modifier.size(EInkTheme.Toolbar.buttonSizeLarge),
-                        onSelect = {
-                            DrawCanvas.toolbarInteraction.tryEmit(Unit)
-                            activeTower.saveAndExitTextBox()
-                            scope.launch { activeTower.redo() }
-                        },
-                        iconId = R.drawable.redo_40px,
-                        contentDescription = "redo",
-                        iconPadding = 4
-                    )
+                        // Redo (48dp with reduced padding for larger icon)
+                        ToolbarButton(
+                            modifier = Modifier.size(EInkTheme.Toolbar.buttonSizeLarge),
+                            onSelect = {
+                                DrawCanvas.toolbarInteraction.tryEmit(Unit)
+                                activeTower.saveAndExitTextBox()
+                                scope.launch { activeTower.redo() }
+                            },
+                            iconId = R.drawable.redo_40px,
+                            contentDescription = "redo",
+                            iconPadding = 4
+                        )
+                    }
                 }
 
                 val pageNav: @Composable () -> Unit = {
@@ -1689,7 +1697,7 @@ fun SharedToolbar(
                         }
                         val navButtonHeight = BUTTON_SIZE.dp
                         // Compact bar (layout B): full 44dp finger targets; Regular keeps its 30dp arrows
-                        val navChevronWidth = if (isCompactToolbar) EInkTheme.Global.touchTarget else EInkTheme.Toolbar.navChevronWidth
+                        val navChevronWidth = if (isCompactToolbar && !isPocketToolbar) EInkTheme.Global.touchTarget else EInkTheme.Toolbar.navChevronWidth
                         val navLabelWidth = 32.dp
 
                         // Left chevron - press state for visual feedback (E-Ink friendly)
@@ -1865,7 +1873,7 @@ fun SharedToolbar(
                 // 152dp total = 75dp per tab + 2dp gap between (enlarged for touch ergonomics)
                 Row(
                     modifier = Modifier
-                        .width(EInkTheme.Toolbar.tabTotalWidth)
+                        .width(if (isPocketToolbar) POCKET_TAB_TOTAL_WIDTH else EInkTheme.Toolbar.tabTotalWidth)
                         .height(BUTTON_SIZE.dp),
                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                     verticalAlignment = Alignment.Bottom
@@ -1875,7 +1883,7 @@ fun SharedToolbar(
                         modifier = Modifier
                             .then(if (currentTab == EditorTab.Memos) Modifier.fillMaxHeight() else Modifier.height((BUTTON_SIZE - 5).dp))
                             .weight(1f)
-                            .noRippleClickable {
+                            .noRippleClickable(onLongClick = ::toggleFullScreenFromTab) {
                                 DrawCanvas.toolbarInteraction.tryEmit(Unit)  // Close expanded events panel
                                 if (currentTab != EditorTab.Memos) {
                                     if (PERF_LOGS) {
@@ -1901,7 +1909,7 @@ fun SharedToolbar(
                         Text(
                             text = buildAnnotatedString {
                                 append("Memos")
-                                if (memosPageCount > 1) {
+                                if (memosPageCount > 1 && !isPocketToolbar) {
                                     withStyle(SpanStyle(
                                         fontSize = if (currentTab == EditorTab.Memos)
                                             EInkTheme.EventsPanel.tabCountFontSizeSelected
@@ -1923,7 +1931,7 @@ fun SharedToolbar(
                         modifier = Modifier
                             .then(if (currentTab == EditorTab.Tasks) Modifier.fillMaxHeight() else Modifier.height((BUTTON_SIZE - 5).dp))
                             .weight(1f)
-                            .noRippleClickable {
+                            .noRippleClickable(onLongClick = ::toggleFullScreenFromTab) {
                                 DrawCanvas.toolbarInteraction.tryEmit(Unit)  // Close expanded events panel
                                 if (currentTab == EditorTab.Memos) {
                                     if (PERF_LOGS) {
@@ -1949,7 +1957,7 @@ fun SharedToolbar(
                         Text(
                             text = buildAnnotatedString {
                                 append("Tasks")
-                                if (tasksPageCount > 1) {
+                                if (tasksPageCount > 1 && !isPocketToolbar) {
                                     withStyle(SpanStyle(
                                         fontSize = if (currentTab == EditorTab.Tasks)
                                             EInkTheme.EventsPanel.tabCountFontSizeSelected
@@ -1982,7 +1990,8 @@ fun SharedToolbar(
                     compactToolbarFit(
                         barWidth = barWidth,
                         hasPageNav = hasPageNav,
-                        hasPenSettings = currentPenSetting != null
+                        hasPenSettings = currentPenSetting != null,
+                        isPocket = isPocketToolbar
                     )
                 } else {
                     CompactToolbarFit.ALL
@@ -2128,7 +2137,10 @@ fun SharedToolbar(
                                 onWeeklySummary = onWeeklySummary,
                                 hasBooxPermission = hasBooxPermission,
                                 showBooxAlert = showBooxAlert,
-                                closeToolbarMenu = closeToolbarMenu
+                                closeToolbarMenu = closeToolbarMenu,
+                                onRedo = if (isPocketToolbar) {
+                                    { activeTower.saveAndExitTextBox(); scope.launch { activeTower.redo() } }
+                                } else null
                             )
                         )
                     }
@@ -2274,8 +2286,16 @@ private fun toolbarMenuTools(
     onWeeklySummary: (() -> Unit)?,
     hasBooxPermission: Boolean,
     showBooxAlert: Boolean,
-    closeToolbarMenu: () -> Unit
+    closeToolbarMenu: () -> Unit,
+    onRedo: (() -> Unit)? = null
 ): List<ToolbarMenuTool> = buildList {
+    if (onRedo != null) {
+        add(ToolbarMenuTool(
+            label = "Redo",
+            icon = { tint -> MenuIcon(R.drawable.redo_40px, tint) },
+            onClick = onRedo
+        ))
+    }
     if (isCompactToolbar && !compactFit.penSettings && penSetting != null) {
         add(ToolbarMenuTool(
             label = "Pen size and color",
@@ -2473,8 +2493,23 @@ private fun toolbarMenuTools(
     if (!isMemosTab) com.boox.day.ui.components.newTasksMenuTool(context)?.let { add(0, it) }
 }
 
+/**
+ * Long press on the Memos or Tasks tab (Nov 2026): full screen and back in one gesture, where the bar has
+ * no room for the full screen button (Palma) and on every other tablet too.
+ */
+private fun toggleFullScreenFromTab() {
+    DrawCanvas.toolbarInteraction.tryEmit(Unit)
+    FullScreenState.toggle()
+}
+
 /** Gap between neighbouring controls on the compact bar, so a finger tap never lands on two. */
 private val COMPACT_TOOL_GAP = 8.dp
+
+/** Smallest gap on the pocket bar (Palma), which has 439 dp for the compact bar's fixed controls. */
+private val POCKET_TOOL_GAP = 6.dp
+
+/** Memos/Tasks tabs on the pocket bar (Palma): 56 dp each and the 2 dp gap; the page counts are left out. */
+private val POCKET_TAB_TOTAL_WIDTH = 114.dp
 
 /** Which optional tools the compact toolbar shows on the bar (Oct 2026, layout B); the rest go to the toolbar menu (≡). */
 private data class CompactToolbarFit(
@@ -2497,17 +2532,21 @@ private data class CompactToolbarFit(
  * stay at their full touch sizes. The optional controls are placed by priority — full screen, pen size &
  * color, then Boox Notes / task actions, then lasso / quick add — each one that still fits takes its place, so
  * a gap left by a wide tool is used by a narrower one. The rest go to the toolbar menu (≡); on the Go 6
- * (572 dp, with page navigation) none fit, so full screen is in the menu there.
+ * (572 dp, with page navigation) none fit, so full screen is in the menu there. Pocket screens ([isPocket],
+ * Palma 439 dp) use narrower tabs, the regular bar's slim page arrows and smaller gaps, and leave redo to ≡.
  * The widths are those of the composables in [Toolbar] — keep them in step when sizes change.
  */
-private fun compactToolbarFit(barWidth: Dp, hasPageNav: Boolean, hasPenSettings: Boolean): CompactToolbarFit {
+private fun compactToolbarFit(barWidth: Dp, hasPageNav: Boolean, hasPenSettings: Boolean, isPocket: Boolean): CompactToolbarFit {
     val t = EInkTheme.Toolbar
-    val gap = COMPACT_TOOL_GAP
-    // Each control after the tabs follows a gap of at least COMPACT_TOOL_GAP (ToolbarGap)
-    val fixed = 2.dp + t.tabTotalWidth +
+    val gap = if (isPocket) POCKET_TOOL_GAP else COMPACT_TOOL_GAP
+    val tabs = if (isPocket) POCKET_TAB_TOTAL_WIDTH else t.tabTotalWidth
+    val navChevron = if (isPocket) t.navChevronWidth else EInkTheme.Global.touchTarget
+    val redo = if (isPocket) 0.dp else gap + t.buttonSizeLarge
+    // Each control after the tabs follows a gap of at least the bar's tool gap (ToolbarGap)
+    val fixed = 2.dp + tabs +
         gap + t.buttonSizeLarge + gap + t.buttonSizeMedium +                          // pen, eraser
-        (if (hasPageNav) gap + EInkTheme.Global.touchTarget * 2 + 32.dp else 0.dp) +  // page navigation (label 32dp)
-        gap + t.buttonSizeLarge + gap + t.buttonSizeLarge + gap + t.buttonSizeLarge   // undo, redo, menu ≡ (48dp)
+        (if (hasPageNav) gap + navChevron * 2 + 32.dp else 0.dp) +                    // page navigation (label 32dp)
+        gap + t.buttonSizeLarge + redo + gap + t.buttonSizeLarge                      // undo, redo, menu ≡ (48dp)
     var spare = barWidth - fixed
     val fullScreenWidth = gap + t.buttonSizeMedium
     val fullScreen = fullScreenWidth <= spare
