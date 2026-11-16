@@ -28,6 +28,9 @@ object LayoutProfiles {
     /** Screens narrower than this (in dp at the app density) are narrow screens. */
     private const val NARROW_MAX_WIDTH_DP = 600f
 
+    /** Screens narrower than this (in dp at the app density) are pocket screens. */
+    private const val POCKET_MAX_WIDTH_DP = 500f
+
     /** The layout every device uses. */
     val current: LayoutProfile = LayoutProfile.Regular
 
@@ -41,6 +44,13 @@ object LayoutProfiles {
      * the toolbar menu). The Go 10.3 is 773 dp wide at 385 dpi.
      */
     val isNarrowScreen: Boolean by lazy { screenWidthDp < NARROW_MAX_WIDTH_DP }
+
+    /**
+     * Phone-sized screens such as the BOOX Palma (824 px wide, 439 dp at 300 dpi): narrow screens
+     * where even the six narrow header buttons don't fit, so the header keeps three and moves the
+     * rest into a ⋮ popup.
+     */
+    val isPocketScreen: Boolean by lazy { screenWidthDp < POCKET_MAX_WIDTH_DP }
 
     /**
      * Tablets smaller than 10.3 inches (Go 6, Go 7: [AppDensity.isSmallScreen]). Not the same as

@@ -601,20 +601,92 @@ fun MonthHeaderWithToolbar(
         Spacer(modifier = Modifier.width(2.dp))
     }
 
-    if (compact) {
+    val headerHostView = LocalView.current  // for the settings menu opened inside the ⋮ popup
+
+    if (compact || LayoutProfiles.isPocketScreen) {
         // Report popups so MainScreen can pause raw drawing under them
         val compactPopupVisible = isOverflowOpen || isSettingsMenuOpen || showStatsPopup
         LaunchedEffect(compactPopupVisible) { onCompactPopupVisibleChange(compactPopupVisible) }
         // Closing the settings menu (item chosen or dismissed) also closes the ⋮ popup
         LaunchedEffect(isSettingsMenuOpen) { if (!isSettingsMenuOpen) isOverflowOpen = false }
+    }
 
+    // ⋮ on pocket screens (Palma): voice, sync, search and settings, which don't fit on the bar
+    val pocketOverflowButton: @Composable () -> Unit = {
+        Box {
+            IconButton(
+                onClick = { isOverflowOpen = !isOverflowOpen },
+                modifier = Modifier.size(EInkTheme.Global.touchTarget)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.MoreVert,
+                    contentDescription = "More",
+                    modifier = Modifier.size(EInkTheme.CalendarToolbar.iconSizeStandard),
+                    tint = EInkTheme.Colors.primary
+                )
+            }
+            val overflowBadgeCount = attention.count
+            if (overflowBadgeCount > 0 || (isSignedIn && hasSyncError)) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 4.dp, end = 4.dp)
+                        .size(16.dp)
+                        .background(EInkTheme.Colors.primary, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = when {
+                            overflowBadgeCount > 9 -> "9+"
+                            overflowBadgeCount > 0 -> overflowBadgeCount.toString()
+                            else -> "!"
+                        },
+                        color = EInkTheme.Colors.white,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            if (isOverflowOpen) {
+                val popupOffsetY = with(LocalDensity.current) { EInkTheme.Global.touchTarget.roundToPx() }
+                Popup(
+                    alignment = Alignment.TopEnd,
+                    offset = IntOffset(0, popupOffsetY),
+                    onDismissRequest = { if (!isSettingsMenuOpen) isOverflowOpen = false },
+                    properties = PopupProperties(focusable = true)
+                ) {
+                    CompositionLocalProvider(LocalHeaderIconScale provides HEADER_POPUP_ICON_SCALE) {
+                        NestedPopupHost(hostView = headerHostView) {
+                            Row(
+                                modifier = Modifier
+                                    .background(EInkTheme.PopupMenu.background)
+                                    .border(EInkTheme.PopupMenu.borderWidth, EInkTheme.PopupMenu.borderColor)
+                                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                voiceButton()
+                                Spacer(modifier = Modifier.width(HEADER_ICON_GAP))
+                                syncIcon()
+                                Spacer(modifier = Modifier.width(HEADER_ICON_GAP))
+                                searchButton()
+                                Spacer(modifier = Modifier.width(HEADER_ICON_GAP))
+                                settingsButton()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (compact) {
         // Layout B (Oct 2026): search and sync sit on the bar when the screen is wide enough (e.g.
         // ~570-590dp at a 290-300 dpi setting); otherwise they stay in ⋮. ‹ "September 2026" ›,
         // today, add and ⋮ (53dp buttons) with their gaps take ~438dp; search and sync add 63dp each.
         val headerWidth = with(LocalDensity.current) { context.resources.displayMetrics.widthPixels.toDp() }
         val searchOnBar = headerWidth >= 502.dp
         val syncOnBar = headerWidth >= 565.dp
-        val headerHostView = LocalView.current  // for the settings menu opened inside the ⋮ popup
 
         // Bigger header buttons on compact screens, easier to hit with a finger (Oct 2026)
         CompositionLocalProvider(LocalHeaderIconScale provides HEADER_BAR_ICON_SCALE) {
@@ -774,7 +846,8 @@ fun MonthHeaderWithToolbar(
             contentAlignment = Alignment.CenterStart
         ) {
             Text(
-                text = monthNames[month],
+                // Pocket screens (Palma): "Nov", so today, add and ⋮ fit beside it
+                text = if (LayoutProfiles.isPocketScreen) monthNames[month].take(3) else monthNames[month],
                 fontSize = EInkTheme.CalendarToolbar.monthFontSize,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
@@ -858,7 +931,13 @@ fun MonthHeaderWithToolbar(
 
         // Right side: Toolbar icons with spacing. Today comes first (back on 14 Oct 2026 at the owner's
         // request; it is the only Today button since DayHeader's shortcut was removed on 15 Oct 2026).
-        if (LayoutProfiles.isNarrowScreen) {
+        if (LayoutProfiles.isPocketScreen) {
+            todayButton()
+            HeaderGap()
+            addEventButton()
+            HeaderGap()
+            pocketOverflowButton()
+        } else if (LayoutProfiles.isNarrowScreen) {
             // Narrow screens (Go 6, Oct 2026): six buttons at full touch size, spread evenly like the
             // toolbar. All eight did not fit (search and settings went off the screen): the streak and
             // What's New are in the settings menu, and sync shows its state on the icon only.
