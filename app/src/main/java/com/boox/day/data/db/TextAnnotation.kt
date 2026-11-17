@@ -84,6 +84,9 @@ interface TextAnnotationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(annotations: List<TextAnnotation>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    fun insertAllNow(annotations: List<TextAnnotation>)
+
     @Update
     suspend fun update(annotation: TextAnnotation)
 

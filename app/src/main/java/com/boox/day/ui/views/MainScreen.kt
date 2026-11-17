@@ -1679,6 +1679,25 @@ fun MainScreen(
                 }
             }
         }
+        launch {
+            DayPageRepository.noteDateChanged.collect { changedDate ->
+                if (changedDate == selectedDateState.value) {
+                    memosPageCount = withContext(Dispatchers.IO) {
+                        appRepository.dayPageRepository.getPageCount(changedDate).coerceAtLeast(1)
+                    }
+                }
+                if (changedDate.startsWith(currentYearMonthState.value)) {
+                    val hasNote = withContext(Dispatchers.IO) {
+                        appRepository.dayPageRepository.dateHasContent(changedDate)
+                    }
+                    datesWithNotes = if (hasNote) {
+                        (datesWithNotes + changedDate).distinct()
+                    } else {
+                        datesWithNotes - changedDate
+                    }
+                }
+            }
+        }
         TaskRepository.taskChanged.collect { changedDate ->
             // Only update if the changed date is in the current viewing month
             if (changedDate.startsWith(currentYearMonthState.value)) {

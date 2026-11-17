@@ -30,6 +30,9 @@ import kotlinx.coroutines.sync.withLock
 import com.boox.day.data.db.TaskRepository
 import com.boox.day.data.db.TextAnnotation
 import com.boox.day.data.db.TextAnnotationRepository
+import com.boox.day.data.db.UnifiedOcrRepository
+import com.boox.day.ocr.TextAnnotationIndexer
+import com.boox.day.ocr.model.OcrSource
 import java.util.Date
 import java.util.UUID
 
@@ -457,9 +460,58 @@ class EditorControlTower(
                 }
             } else {
                 // Already empty - show message
-                com.boox.day.ui.showHint("Page is already empty", scope)
+                showHint("Page is already empty", scope)
             }
         }
+    }
+
+    /**
+     * Move the current memo page to [targetDate] and switch [state.dayDate] to its remaining/new page.
+     */
+    fun moveCurrentDayPageToDate(targetDate: String): Boolean {
+        val sourceDate = state.dayDate ?: return false
+        if (sourceDate == targetDate) return false
+        val currentPageId = state.currentPageId
+        val dayPageRepo = state.appRepository.dayPageRepository
+
+        saveAndExitTextBox()
+        val newSourcePageId = dayPageRepo.movePageToDate(sourceDate, targetDate, currentPageId) ?: return false
+        switchDayPage(newSourcePageId)
+
+        scope.launch(Dispatchers.IO) {
+            ClearedPages.forgetSearchText(page.context, sourceDate, listOf(currentPageId))
+            val annotations = state.appRepository.textAnnotationRepository.getByPageId(currentPageId)
+            val ocr = UnifiedOcrRepository(page.context)
+            val indexer = TextAnnotationIndexer.getInstanceOrNull()
+            for (annotation in annotations) {
+                ocr.deleteOcrForPage(OcrSource.TEXT_ANNOTATION, sourceDate, annotation.id)
+                indexer?.onAnnotationChanged(annotation)
+            }
+        }
+        DrawCanvas.contentChanged.tryEmit(Unit)
+        return true
+    }
+
+    /**
+     * Copy the current memo page to [targetDate], keeping the current page open on [state.dayDate].
+     */
+    fun copyCurrentDayPageToDate(targetDate: String): Boolean {
+        val sourceDate = state.dayDate ?: return false
+        if (sourceDate == targetDate) return false
+        val currentPageId = state.currentPageId
+        val dayPageRepo = state.appRepository.dayPageRepository
+
+        saveAndExitTextBox()
+        val copiedPageId = dayPageRepo.copyPageToDate(sourceDate, targetDate, currentPageId) ?: return false
+
+        scope.launch(Dispatchers.IO) {
+            val annotations = state.appRepository.textAnnotationRepository.getByPageId(copiedPageId)
+            val indexer = TextAnnotationIndexer.getInstanceOrNull()
+            for (annotation in annotations) {
+                indexer?.onAnnotationChanged(annotation)
+            }
+        }
+        return true
     }
 
     private fun switchDayPage(newPageId: String) {

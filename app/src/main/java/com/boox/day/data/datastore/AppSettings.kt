@@ -69,6 +69,12 @@ object GlobalAppSettings {
         _preloadedTasksPageId.value = tasksPageId
     }
 
+    fun updatePreloadedMemosPageId(date: String, memosPageId: String) {
+        if (_preloadedDate.value == date) {
+            _preloadedMemosPageId.value = memosPageId
+        }
+    }
+
     fun clearPreloadedPageIds() {
         _preloadedDate.value = null
         _preloadedMemosPageId.value = null

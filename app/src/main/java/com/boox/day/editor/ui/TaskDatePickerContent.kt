@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,6 +70,15 @@ fun TaskDatePickerContent(
 
     var displayedYear by remember { mutableStateOf(initialCalendar.get(Calendar.YEAR)) }
     var displayedMonth by remember { mutableStateOf(initialCalendar.get(Calendar.MONTH)) }
+
+    LaunchedEffect(selectedDate) {
+        if (selectedDate != null) {
+            runCatching { LocalDate.parse(selectedDate) }.getOrNull()?.let { picked ->
+                displayedYear = picked.year
+                displayedMonth = picked.monthValue - 1
+            }
+        }
+    }
 
     Column {
         // Month/Year navigation
@@ -511,5 +521,204 @@ fun TaskDatePickerDialog(
             }
         }
         }
+    }
+}
+
+/**
+ * Dialog for moving or copying a memo page to Today, the next day, or any chosen calendar date.
+ */
+@Composable
+fun MoveMemoPageDialog(
+    currentDate: String,
+    onMoveToDate: (String) -> Unit,
+    onCopyToDate: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val theme = EInkTheme.TaskDatePickerDialog
+    val today = remember { LocalDate.now() }
+    val todayStr = remember(today) { today.toString() }
+    val rawNextDayStr = remember(currentDate) {
+        runCatching { LocalDate.parse(currentDate).plusDays(1).toString() }.getOrDefault(today.plusDays(1).toString())
+    }
+    val secondQuickDateStr = if (rawNextDayStr == todayStr) today.plusDays(1).toString() else rawNextDayStr
+    val secondQuickLabel = if (currentDate == todayStr || rawNextDayStr == todayStr) "Tomorrow" else "Next Day"
+    var selectedDate by remember(currentDate) {
+        mutableStateOf<String?>(if (currentDate != todayStr) todayStr else secondQuickDateStr)
+    }
+
+    Popup(
+        alignment = Alignment.Center,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true, dismissOnBackPress = true)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .noRippleClickable { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(theme.dialogWidth)
+                    .background(theme.dialogBackground, RoundedCornerShape(theme.dialogCornerRadius))
+                    .border(theme.dialogBorderWidth, theme.dialogBorderColor, RoundedCornerShape(theme.dialogCornerRadius))
+                    .noRippleClickable { }
+            ) {
+                Column(
+                    modifier = Modifier.padding(theme.dialogPadding)
+                ) {
+                    Text(
+                        text = "Move Page",
+                        fontSize = theme.titleFontSize,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
+                        color = theme.titleColor
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val todayEnabled = currentDate != todayStr
+                        val todaySelected = selectedDate == todayStr && todayEnabled
+                        QuickDateChoiceButton(
+                            label = "Today",
+                            selected = todaySelected,
+                            enabled = todayEnabled,
+                            onClick = { selectedDate = todayStr },
+                            modifier = Modifier.weight(1f)
+                        )
+                        val nextSelected = selectedDate == secondQuickDateStr
+                        QuickDateChoiceButton(
+                            label = secondQuickLabel,
+                            selected = nextSelected,
+                            enabled = true,
+                            onClick = { selectedDate = secondQuickDateStr },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    TaskDatePickerContent(
+                        currentDate = currentDate,
+                        selectedDate = selectedDate,
+                        onDateSelected = { selectedDate = it }
+                    )
+
+                    Spacer(modifier = Modifier.height(theme.gridToButtonsSpacing))
+
+                    val canAct = selectedDate != null && selectedDate != currentDate
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .height(EInkTheme.Button.height)
+                                .background(EInkTheme.Button.background, RoundedCornerShape(theme.buttonCornerRadius))
+                                .border(EInkTheme.Divider.thickness, EInkTheme.Button.borderColor, RoundedCornerShape(theme.buttonCornerRadius))
+                                .noRippleClickable { onDismiss() }
+                                .padding(horizontal = theme.buttonHorizontalPadding),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Cancel",
+                                color = EInkTheme.Button.textColor,
+                                fontSize = EInkTheme.Typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(theme.buttonRowSpacing))
+
+                        Box(
+                            modifier = Modifier
+                                .height(EInkTheme.Button.height)
+                                .background(
+                                    if (canAct) EInkTheme.Button.background else EInkTheme.Colors.lightGray,
+                                    RoundedCornerShape(theme.buttonCornerRadius)
+                                )
+                                .border(EInkTheme.Divider.thickness, EInkTheme.Button.borderColor, RoundedCornerShape(theme.buttonCornerRadius))
+                                .noRippleClickable(enabled = canAct) {
+                                    selectedDate?.let { onCopyToDate(it) }
+                                }
+                                .padding(horizontal = theme.buttonHorizontalPadding),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Copy",
+                                color = if (canAct) EInkTheme.Button.textColor else EInkTheme.Colors.darkGray,
+                                fontSize = EInkTheme.Typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(theme.buttonRowSpacing))
+
+                        Box(
+                            modifier = Modifier
+                                .height(EInkTheme.Button.height)
+                                .background(
+                                    if (canAct) EInkTheme.Button.primaryBackground else EInkTheme.Colors.lightGray,
+                                    RoundedCornerShape(theme.buttonCornerRadius)
+                                )
+                                .noRippleClickable(enabled = canAct) {
+                                    selectedDate?.let { onMoveToDate(it) }
+                                }
+                                .padding(horizontal = theme.buttonHorizontalPadding),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Move",
+                                color = if (canAct) EInkTheme.Button.primaryTextColor else EInkTheme.Colors.darkGray,
+                                fontSize = EInkTheme.Typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickDateChoiceButton(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(EInkTheme.TaskDatePickerDialog.buttonCornerRadius)
+    val bg = when {
+        !enabled -> EInkTheme.Colors.lightGray
+        selected -> EInkTheme.Selection.background
+        else -> EInkTheme.Colors.background
+    }
+    val fg = when {
+        !enabled -> EInkTheme.Colors.darkGray
+        selected -> EInkTheme.Selection.foreground
+        else -> EInkTheme.Colors.primary
+    }
+    Box(
+        modifier = modifier
+            .height(38.dp)
+            .background(bg, shape)
+            .border(EInkTheme.Divider.thickness, EInkTheme.Colors.primary, shape)
+            .noRippleClickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = fg,
+            fontSize = EInkTheme.Typography.bodyMedium,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+        )
     }
 }
