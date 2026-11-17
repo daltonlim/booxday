@@ -12,6 +12,10 @@ import androidx.room.Update
 import android.util.Log
 import com.boox.day.TAG
 import com.boox.day.data.PagePersistenceGate
+import com.boox.day.data.datastore.GlobalAppSettings
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import java.util.Collections
 import java.util.Date
 import java.util.UUID
@@ -89,6 +93,8 @@ class DayPageRepository(context: Context) {
 
     companion object {
         private const val LOCAL_TAG = "DayPageRepo"
+        private val _noteDateChanged = MutableSharedFlow<String>(extraBufferCapacity = 8)
+        val noteDateChanged: SharedFlow<String> = _noteDateChanged.asSharedFlow()
     }
 
     // PERFORMANCE: LRU cache for page IDs by date (saves DB queries on day switching)
@@ -108,8 +114,12 @@ class DayPageRepository(context: Context) {
     fun invalidatePageCache(date: String? = null) {
         if (date != null) {
             pageIdCache.remove(date)
+            if (GlobalAppSettings.preloadedDate == date) {
+                GlobalAppSettings.clearPreloadedPageIds()
+            }
         } else {
             pageIdCache.clear()
+            GlobalAppSettings.clearPreloadedPageIds()
         }
     }
 
@@ -251,6 +261,7 @@ class DayPageRepository(context: Context) {
         dayPageDao.setOpenPageId(date, pageId)
         // Update cache with new open page
         pageIdCache[date] = pageId
+        GlobalAppSettings.updatePreloadedMemosPageId(date, pageId)
     }
 
     /**
@@ -342,6 +353,137 @@ class DayPageRepository(context: Context) {
         dayPageDao.setPageIds(date, newPageIds)
         invalidatePageCache(date)
         Log.i(LOCAL_TAG, "Reordered pages for $date: $newPageIds")
+    }
+
+    /**
+     * Move a memo page from [sourceDate] to [targetDate].
+     * Returns the page ID that should remain open on [sourceDate], or null if the move did not happen.
+     */
+    fun movePageToDate(sourceDate: String, targetDate: String, pageId: String): String? {
+        if (sourceDate == targetDate) return null
+        val sourceDayPage = dayPageDao.getByDate(sourceDate) ?: return null
+        val currentIndex = sourceDayPage.pageIds.indexOf(pageId)
+        if (currentIndex < 0) return null
+
+        attachPageToTargetDate(targetDate, pageId)
+
+        val updatedSourceIds = sourceDayPage.pageIds.filterNot { it == pageId }
+        val newSourceOpenPageId = if (updatedSourceIds.isEmpty()) {
+            val newPage = Page(
+                id = UUID.randomUUID().toString(),
+                background = "blank",
+                backgroundType = "native"
+            )
+            pageDao.create(newPage)
+            dayPageDao.setPageIds(sourceDate, listOf(newPage.id))
+            setOpenPageId(sourceDate, newPage.id)
+            newPage.id
+        } else {
+            val nextId = if (currentIndex > 0) updatedSourceIds[currentIndex - 1] else updatedSourceIds.first()
+            dayPageDao.setPageIds(sourceDate, updatedSourceIds)
+            setOpenPageId(sourceDate, nextId)
+            nextId
+        }
+
+        _noteDateChanged.tryEmit(sourceDate)
+        _noteDateChanged.tryEmit(targetDate)
+        Log.i(TAG, "DayPageRepository: Moved page $pageId from $sourceDate to $targetDate")
+        return newSourceOpenPageId
+    }
+
+    /**
+     * Copy a memo page from [sourceDate] to [targetDate].
+     * Returns the newly created page ID on [targetDate], or null if the copy did not happen.
+     */
+    fun copyPageToDate(sourceDate: String, targetDate: String, pageId: String): String? {
+        if (sourceDate == targetDate) return null
+        val sourceDayPage = dayPageDao.getByDate(sourceDate) ?: return null
+        if (pageId !in sourceDayPage.pageIds) return null
+
+        val pageWithStrokes = pageDao.getPageWithStrokesById(pageId)
+        val pageWithImages = pageDao.getPageWithImagesById(pageId)
+        val annotations = textAnnotationDao.getForPageNow(pageId)
+        val now = Date()
+        val newPageId = UUID.randomUUID().toString()
+
+        pageDao.create(
+            pageWithStrokes.page.copy(
+                id = newPageId,
+                createdAt = now,
+                updatedAt = now,
+                linkedEventId = null
+            )
+        )
+        if (pageWithStrokes.strokes.isNotEmpty()) {
+            strokeDao.create(
+                pageWithStrokes.strokes.map {
+                    it.copy(
+                        id = UUID.randomUUID().toString(),
+                        pageId = newPageId,
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                }
+            )
+        }
+        if (pageWithImages.images.isNotEmpty()) {
+            imageDao.create(
+                pageWithImages.images.map {
+                    it.copy(
+                        id = UUID.randomUUID().toString(),
+                        pageId = newPageId,
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                }
+            )
+        }
+        if (annotations.isNotEmpty()) {
+            textAnnotationDao.insertAllNow(
+                annotations.map {
+                    it.copy(
+                        id = UUID.randomUUID().toString(),
+                        pageId = newPageId,
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                }
+            )
+        }
+
+        attachPageToTargetDate(targetDate, newPageId)
+        _noteDateChanged.tryEmit(targetDate)
+        Log.i(TAG, "DayPageRepository: Copied page $pageId from $sourceDate to $targetDate as $newPageId")
+        return newPageId
+    }
+
+    private fun attachPageToTargetDate(targetDate: String, pageId: String) {
+        val targetDayPage = dayPageDao.getByDate(targetDate)
+        if (targetDayPage == null || targetDayPage.pageIds.isEmpty()) {
+            dayPageDao.insert(
+                DayPage(
+                    date = targetDate,
+                    pageIds = listOf(pageId),
+                    openPageId = pageId
+                )
+            )
+            setOpenPageId(targetDate, pageId)
+            return
+        }
+
+        val onlyTargetId = targetDayPage.pageIds.singleOrNull()
+        val canReplaceBlankTarget = onlyTargetId != null &&
+            onlyTargetId != pageId &&
+            !pageHasContent(onlyTargetId) &&
+            pageDao.getById(onlyTargetId)?.linkedEventId == null
+
+        val updatedTargetIds = when {
+            canReplaceBlankTarget -> listOf(pageId)
+            pageId in targetDayPage.pageIds -> targetDayPage.pageIds
+            else -> targetDayPage.pageIds + pageId
+        }
+        dayPageDao.setPageIds(targetDate, updatedTargetIds)
+        setOpenPageId(targetDate, pageId)
     }
 
     /**

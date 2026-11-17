@@ -21,12 +21,14 @@ import androidx.compose.material.Divider
 import androidx.compose.material.Icon
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.boox.day.editor.ui.MoveMemoPageDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -215,10 +217,52 @@ fun ToolbarMenu(
     var showExportDialog by remember { mutableStateOf(false) }
 
     // Confirmation dialog states
+    var showMovePageDialog by remember { mutableStateOf(false) }
     var showClearPageConfirmation by remember { mutableStateOf(false) }
     var showDeletePageConfirmation by remember { mutableStateOf(false) }
     var showClearMemosConfirmation by remember { mutableStateOf(false) }
     var showClearTasksConfirmation by remember { mutableStateOf(false) }
+
+    // Move Memo Page Dialog
+    if (showMovePageDialog && state.dayDate != null) {
+        MoveMemoPageDialog(
+            currentDate = state.dayDate!!,
+            onMoveToDate = { targetDate ->
+                showMovePageDialog = false
+                onClose()
+                if (controlTower.moveCurrentDayPageToDate(targetDate)) {
+                    val label = DateTimeFormatUtils.formatDateFullFromString(targetDate)
+                    scope.launch {
+                        snackManager.displaySnack(
+                            SnackConf(
+                                text = "Page moved to $label",
+                                duration = SnackConf.DURATION_QUICK
+                            )
+                        )
+                    }
+                }
+            },
+            onCopyToDate = { targetDate ->
+                showMovePageDialog = false
+                onClose()
+                if (controlTower.copyCurrentDayPageToDate(targetDate)) {
+                    val label = DateTimeFormatUtils.formatDateFullFromString(targetDate)
+                    scope.launch {
+                        snackManager.displaySnack(
+                            SnackConf(
+                                text = "Page copied to $label",
+                                duration = SnackConf.DURATION_QUICK
+                            )
+                        )
+                    }
+                }
+            },
+            onDismiss = {
+                showMovePageDialog = false
+                onClose()
+            }
+        )
+    }
 
     // Task Export Dialog state
     var showTaskExportDialog by remember { mutableStateOf(false) }
@@ -381,7 +425,7 @@ fun ToolbarMenu(
     var openToolLabel by remember { mutableStateOf<String?>(null) }
     val openTool = tools.firstOrNull { it.label == openToolLabel }
 
-    Popup(
+    if (!showMovePageDialog) Popup(
         alignment = Alignment.TopEnd,
         onDismissRequest = { onClose() },
         offset = IntOffset(
@@ -461,6 +505,17 @@ fun ToolbarMenu(
 
                         // Page operations section
                         if (activeTab == EditorTab.Memos) {
+                            if (state.dayDate != null) {
+                                MenuItem(
+                                    label = "Move Page...",
+                                    icon = Icons.AutoMirrored.Filled.DriveFileMove
+                                ) {
+                                    showMovePageDialog = true
+                                }
+
+                                DividerCentered()
+                            }
+
                             // Memos: Clear This Page (removes content, keeps page)
                             MenuItemWithDrawableIcon(
                                 label = "Clear This Page",
