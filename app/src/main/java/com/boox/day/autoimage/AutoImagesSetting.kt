@@ -75,11 +75,11 @@ fun AutoImagesSetting() {
 
     SettingCard(
         title = "Auto-save images",
-        description = "Saves the memo page you edited last and today's to-do list as pictures every time they change, " +
+        description = "Saves the memo page you opened last (on a blank page, the memo shown before) and today's to-do list as pictures every time they change, " +
             "to use as a wallpaper or screensaver, or in a synced folder."
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(EInkTheme.Global.spacingSmall)) {
-            SwitchRow("Last edited memo page", choice.notes) { change(choice.copy(notes = it)) }
+            SwitchRow("Memo page", choice.notes) { change(choice.copy(notes = it)) }
             SwitchRow("To-do list", choice.tasks) { change(choice.copy(tasks = it)) }
 
             if (choice.tasks) {

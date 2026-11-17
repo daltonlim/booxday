@@ -8,7 +8,7 @@ import kotlinx.serialization.Serializable
  */
 @Serializable
 data class AutoImageSettings(
-    /** One PNG of the memo page edited last, on any day. */
+    /** One PNG of the memo page opened last (on a blank page, the memo shown before). */
     val notes: Boolean = false,
     /** Today's to-do list, drawn as [tasksStyle]. */
     val tasks: Boolean = false,

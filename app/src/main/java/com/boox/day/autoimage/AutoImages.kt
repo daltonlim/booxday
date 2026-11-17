@@ -73,6 +73,7 @@ object AutoImages {
     /** Wait after a memo page is opened, so scrolling through memos saves only the one it stops on. */
     private const val OPENED_DELAY_MS = 2_000L
     private const val KEY_OPENED_MEMO = "opened_memo"
+    private const val KEY_SHOWN_MEMO = "shown_memo"
 
     /** Ink too far from a row to count as written in it; the app's own rule decides inside. */
     private const val MIN_TASKS_GEOMETRY_PX = 10f
@@ -180,9 +181,22 @@ object AutoImages {
         name == MEMO_FILE || name == TASKS_LIST ||
             (name.endsWith(".png") && (name.startsWith(OLD_NOTES_PREFIX) || name.startsWith(TASKS_PREFIX)))
 
-    /** The memo page opened last, the size of the screen; null when it's gone or has nothing on it. */
+    /**
+     * The memo page opened last, or when that page is empty/gone, the last opened memo page that had
+     * something on it; null when neither has content.
+     */
     private suspend fun openedMemoImage(context: Context, width: Int, height: Int): Bitmap? {
-        val pageId = prefs(context).getString(KEY_OPENED_MEMO, null) ?: return null
+        val prefs = prefs(context)
+        val opened = prefs.getString(KEY_OPENED_MEMO, null)
+        opened?.let { memoPageImage(context, it, width, height) }?.let { image ->
+            prefs.edit().putString(KEY_SHOWN_MEMO, opened).apply()
+            return image
+        }
+        val shown = prefs.getString(KEY_SHOWN_MEMO, null)?.takeIf { it != opened } ?: return null
+        return memoPageImage(context, shown, width, height)
+    }
+
+    private suspend fun memoPageImage(context: Context, pageId: String, width: Int, height: Int): Bitmap? {
         if (AppDatabase.getDatabase(context).dayPageDao().getDateByPageId(pageId) == null) return null
         val image = AutoImageRenderer.memoPage(context, MemoPageContent.load(context, pageId), width, height) ?: return null
         return toScreen(image, width, height)
