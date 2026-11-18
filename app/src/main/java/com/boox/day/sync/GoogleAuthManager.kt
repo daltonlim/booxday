@@ -101,17 +101,25 @@ class GoogleAuthManager(private val context: Context) {
                 else -> 24 * 60 * 60 * 1000L
             }
         }
+
+        @Volatile
+        private var sharedEncryptedPrefs: LazyEncryptedPrefs? = null
+
+        private fun getEncryptedPrefs(context: Context): LazyEncryptedPrefs {
+            return sharedEncryptedPrefs ?: synchronized(this) {
+                sharedEncryptedPrefs ?: LazyEncryptedPrefs(
+                    context = context.applicationContext,
+                    prefsName = PREFS_NAME,
+                    tag = TAG
+                ).also { sharedEncryptedPrefs = it }
+            }
+        }
     }
 
-    private val encryptedPrefs = LazyEncryptedPrefs(
-        context = context.applicationContext,
-        prefsName = PREFS_NAME,
-        tag = TAG
-    )
+    private val encryptedPrefs: LazyEncryptedPrefs
+        get() = getEncryptedPrefs(context)
 
-    private val googleSignInClient: GoogleSignInClient
-
-    init {
+    private val googleSignInClient: GoogleSignInClient by lazy {
         // Request both Calendar and Drive scopes in single sign-in
         // Features can be enabled/disabled independently after sign-in
         val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
@@ -123,8 +131,9 @@ class GoogleAuthManager(private val context: Context) {
             )
             .build()
 
-        googleSignInClient = GoogleSignIn.getClient(context, gso)
-        Log.i(TAG, "GoogleAuthManager initialized with calendar events + calendar list + DRIVE_FILE scopes")
+        GoogleSignIn.getClient(context, gso).also {
+            Log.i(TAG, "GoogleAuthManager initialized with calendar events + calendar list + DRIVE_FILE scopes")
+        }
     }
 
     private fun prefsOrNull(): SharedPreferences? = encryptedPrefs.getOrNull()

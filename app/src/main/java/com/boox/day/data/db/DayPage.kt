@@ -95,17 +95,24 @@ class DayPageRepository(context: Context) {
         private const val LOCAL_TAG = "DayPageRepo"
         private val _noteDateChanged = MutableSharedFlow<String>(extraBufferCapacity = 8)
         val noteDateChanged: SharedFlow<String> = _noteDateChanged.asSharedFlow()
-    }
 
-    // PERFORMANCE: LRU cache for page IDs by date (saves DB queries on day switching)
-    // Thread-safe: Wrapped with synchronizedMap for concurrent access from main/background threads
-    private val pageIdCache = Collections.synchronizedMap(
-        object : LinkedHashMap<String, String>(32, 0.75f, true) {
-            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>): Boolean {
-                return size > 60  // Cache ~2 months of page IDs
+        // PERFORMANCE: Shared LRU cache for page IDs and DayPage rows by date across all DayPageRepository instances
+        private val pageIdCache = Collections.synchronizedMap(
+            object : LinkedHashMap<String, String>(32, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>): Boolean {
+                    return size > 60  // Cache ~2 months of page IDs
+                }
             }
-        }
-    )
+        )
+
+        private val dayPageCache = Collections.synchronizedMap(
+            object : LinkedHashMap<String, DayPage>(32, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, DayPage>): Boolean {
+                    return size > 60
+                }
+            }
+        )
+    }
 
     /**
      * Invalidate page ID cache for a specific date or all dates.
@@ -114,11 +121,13 @@ class DayPageRepository(context: Context) {
     fun invalidatePageCache(date: String? = null) {
         if (date != null) {
             pageIdCache.remove(date)
+            dayPageCache.remove(date)
             if (GlobalAppSettings.preloadedDate == date) {
                 GlobalAppSettings.clearPreloadedPageIds()
             }
         } else {
             pageIdCache.clear()
+            dayPageCache.clear()
             GlobalAppSettings.clearPreloadedPageIds()
         }
     }
@@ -139,6 +148,7 @@ class DayPageRepository(context: Context) {
         val start = System.currentTimeMillis()
         val dayPages = dayPageDao.getAllForMonth(yearMonth)
         dayPages.forEach { dayPage ->
+            dayPageCache[dayPage.date] = dayPage
             if (dayPage.pageIds.isNotEmpty()) {
                 val pageId = dayPage.openPageId ?: dayPage.pageIds.first()
                 pageIdCache[dayPage.date] = pageId
@@ -167,6 +177,7 @@ class DayPageRepository(context: Context) {
             val pageId = existing.openPageId ?: existing.pageIds.first()
             // Cache the result
             pageIdCache[date] = pageId
+            dayPageCache[date] = existing
             Log.i(LOCAL_TAG, "PERF: getOrCreatePageForDate CACHE MISS (loaded) for $date (${System.currentTimeMillis() - start}ms)")
             return pageId
         }
@@ -189,6 +200,7 @@ class DayPageRepository(context: Context) {
 
         // Cache the new page ID
         pageIdCache[date] = newPage.id
+        dayPageCache[date] = dayPage
         Log.i(LOCAL_TAG, "PERF: getOrCreatePageForDate CACHE MISS (created) for $date (${System.currentTimeMillis() - start}ms)")
         return newPage.id
     }
@@ -197,7 +209,7 @@ class DayPageRepository(context: Context) {
      * Get page info for a date (for toolbar display)
      */
     fun getPageInfoForDate(date: String): DayPageInfo? {
-        val dayPage = dayPageDao.getByDate(date) ?: return null
+        val dayPage = dayPageCache[date] ?: dayPageDao.getByDate(date)?.also { dayPageCache[date] = it } ?: return null
         if (dayPage.pageIds.isEmpty()) return null
 
         val openPageId = dayPage.openPageId ?: dayPage.pageIds.first()
@@ -216,7 +228,8 @@ class DayPageRepository(context: Context) {
      * Get page count for a date
      */
     fun getPageCount(date: String): Int {
-        return dayPageDao.getByDate(date)?.pageIds?.size ?: 0
+        val dayPage = dayPageCache[date] ?: dayPageDao.getByDate(date)?.also { dayPageCache[date] = it }
+        return dayPage?.pageIds?.size ?: 0
     }
 
 
@@ -224,7 +237,7 @@ class DayPageRepository(context: Context) {
      * Get current page index (0-based)
      */
     fun getOpenPageIndex(date: String): Int {
-        val dayPage = dayPageDao.getByDate(date) ?: return 0
+        val dayPage = dayPageCache[date] ?: dayPageDao.getByDate(date)?.also { dayPageCache[date] = it } ?: return 0
         val openPageId = dayPage.openPageId ?: return 0
         return dayPage.pageIds.indexOf(openPageId).coerceAtLeast(0)
     }
@@ -248,6 +261,7 @@ class DayPageRepository(context: Context) {
 
         val updatedPageIds = dayPage.pageIds + newPage.id
         dayPageDao.setPageIds(date, updatedPageIds)
+        dayPageCache[date] = dayPage.copy(pageIds = updatedPageIds, openPageId = newPage.id)
         setOpenPageId(date, newPage.id)  // Use repository method to update BOTH DB and cache
 
         Log.i(TAG, "DayPageRepository: Created new page ${newPage.id} for date $date (now ${updatedPageIds.size} pages)")
@@ -261,6 +275,7 @@ class DayPageRepository(context: Context) {
         dayPageDao.setOpenPageId(date, pageId)
         // Update cache with new open page
         pageIdCache[date] = pageId
+        dayPageCache[date]?.let { dayPageCache[date] = it.copy(openPageId = pageId) }
         GlobalAppSettings.updatePreloadedMemosPageId(date, pageId)
     }
 
@@ -318,6 +333,7 @@ class DayPageRepository(context: Context) {
             if (updatedPageIds.isEmpty()) {
                 // No pages left - delete the DayPage entirely
                 dayPageDao.delete(date)
+                invalidatePageCache(date)
                 Log.i(TAG, "DayPageRepository: Removed last page $pageId from date $date, deleted DayPage")
                 return@withDelete null
             }
@@ -329,6 +345,7 @@ class DayPageRepository(context: Context) {
             }
 
             dayPageDao.setPageIds(date, updatedPageIds)
+            dayPageCache[date] = dayPage.copy(pageIds = updatedPageIds, openPageId = newOpenPageId)
             setOpenPageId(date, newOpenPageId)  // Use repository method to update BOTH DB and cache
 
             Log.i(TAG, "DayPageRepository: Removed page $pageId from date $date, now ${updatedPageIds.size} pages")
@@ -376,11 +393,13 @@ class DayPageRepository(context: Context) {
             )
             pageDao.create(newPage)
             dayPageDao.setPageIds(sourceDate, listOf(newPage.id))
+            dayPageCache[sourceDate] = sourceDayPage.copy(pageIds = listOf(newPage.id), openPageId = newPage.id)
             setOpenPageId(sourceDate, newPage.id)
             newPage.id
         } else {
             val nextId = if (currentIndex > 0) updatedSourceIds[currentIndex - 1] else updatedSourceIds.first()
             dayPageDao.setPageIds(sourceDate, updatedSourceIds)
+            dayPageCache[sourceDate] = sourceDayPage.copy(pageIds = updatedSourceIds, openPageId = nextId)
             setOpenPageId(sourceDate, nextId)
             nextId
         }
@@ -460,13 +479,13 @@ class DayPageRepository(context: Context) {
     private fun attachPageToTargetDate(targetDate: String, pageId: String) {
         val targetDayPage = dayPageDao.getByDate(targetDate)
         if (targetDayPage == null || targetDayPage.pageIds.isEmpty()) {
-            dayPageDao.insert(
-                DayPage(
-                    date = targetDate,
-                    pageIds = listOf(pageId),
-                    openPageId = pageId
-                )
+            val inserted = DayPage(
+                date = targetDate,
+                pageIds = listOf(pageId),
+                openPageId = pageId
             )
+            dayPageDao.insert(inserted)
+            dayPageCache[targetDate] = inserted
             setOpenPageId(targetDate, pageId)
             return
         }
@@ -483,6 +502,7 @@ class DayPageRepository(context: Context) {
             else -> targetDayPage.pageIds + pageId
         }
         dayPageDao.setPageIds(targetDate, updatedTargetIds)
+        dayPageCache[targetDate] = targetDayPage.copy(pageIds = updatedTargetIds, openPageId = pageId)
         setOpenPageId(targetDate, pageId)
     }
 
@@ -568,6 +588,7 @@ class DayPageRepository(context: Context) {
             pageDao.delete(pageId)
         }
         dayPageDao.delete(date)
+        invalidatePageCache(date)
     }
 
     /**

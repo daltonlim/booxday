@@ -274,6 +274,7 @@ class DrawCanvas(
         page = newPage
         state = newState
         history = newHistory
+        activePageId = newPage.currentPageId
 
         // Re-register observers with new state
         registerObservers()
@@ -297,6 +298,7 @@ class DrawCanvas(
         // PERF_DEBUG: Track total observer registrations across all DrawCanvas instances
         @Volatile var totalObserverRegistrations = 0
         @Volatile var totalObserverCancellations = 0
+        @Volatile var activePageId: String? = null
 
         // SPLASH/WELCOME GHOST FIX (Mar 2026):
         // Gate the first raw drawing open on actual splash/welcome dismissal timing.
@@ -1485,6 +1487,7 @@ class DrawCanvas(
 
     fun init(): Boolean {
         log.i("Initializing Canvas")
+        activePageId = page.currentPageId
         return try {
             pressure = OnyxCompat.getMaxTouchPressureOrDefault(pressure)
 
@@ -2366,7 +2369,9 @@ class DrawCanvas(
             if (forcePost) EpdController.enablePost(this, 1)
             unlockAttempted = true
             surfaceHolder.unlockCanvasAndPost(canvas)
-            if (!startupCanvasDrawn.value && memoModeChanged.value == isMemosCanvas) startupCanvasDrawn.value = true
+            if (!startupCanvasDrawn.value && memoModeChanged.value == isMemosCanvas && !page.isLoadRedrawPending) {
+                startupCanvasDrawn.value = true
+            }
             if (zoneToRedraw.width() >= surfaceWidth && zoneToRedraw.height() >= surfaceHeight &&
                 staleGeneration == surfaceStaleGeneration) {
                 surfaceStale = false

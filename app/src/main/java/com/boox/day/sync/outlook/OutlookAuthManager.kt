@@ -19,6 +19,8 @@ import com.microsoft.identity.client.exception.MsalUiRequiredException
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -57,18 +59,30 @@ class OutlookAuthManager(private val context: Context) {
 
         /** Authority URL for work/school Office 365 accounts. */
         const val AUTHORITY_WORK_SCHOOL = "https://login.microsoftonline.com/organizations"
+
+        private val initMutex = Mutex()
+        @Volatile
+        private var sharedMsalApp: IMultipleAccountPublicClientApplication? = null
+        @Volatile
+        private var sharedIsInitialized = false
+        @Volatile
+        private var sharedInitializationError: String? = null
     }
 
     /** The MSAL public client application instance. */
-    private var msalApp: IMultipleAccountPublicClientApplication? = null
+    private var msalApp: IMultipleAccountPublicClientApplication?
+        get() = sharedMsalApp
+        set(value) { sharedMsalApp = value }
 
     /** Whether MSAL has been successfully initialized. */
-    @Volatile
-    private var isInitialized = false
+    private var isInitialized: Boolean
+        get() = sharedIsInitialized
+        set(value) { sharedIsInitialized = value }
 
     /** Initialization error message, if any. */
-    var initializationError: String? = null
-        private set
+    var initializationError: String?
+        get() = sharedInitializationError
+        private set(value) { sharedInitializationError = value }
 
     // ═══════════════════════════════════════════════════════════════════════════
     // Initialization
@@ -82,41 +96,46 @@ class OutlookAuthManager(private val context: Context) {
      *
      * @return Result.success if initialized, Result.failure with exception otherwise
      */
-    suspend fun initialize(): Result<Unit> = withContext(Dispatchers.Main) {
+    suspend fun initialize(): Result<Unit> = initMutex.withLock {
         if (isInitialized && msalApp != null) {
-            return@withContext Result.success(Unit)
+            return@withLock Result.success(Unit)
         }
-
-        try {
-            val app = suspendCancellableCoroutine<IMultipleAccountPublicClientApplication> { continuation ->
-                PublicClientApplication.createMultipleAccountPublicClientApplication(
-                    context,
-                    R.raw.auth_config,
-                    object : IPublicClientApplication.IMultipleAccountApplicationCreatedListener {
-                        override fun onCreated(application: IMultipleAccountPublicClientApplication) {
-                            Log.i(TAG, "MSAL (Multi-Account) initialized successfully")
-                            continuation.resume(application)
-                        }
-
-                        override fun onError(exception: MsalException) {
-                            Log.e(TAG, "MSAL initialization failed: ${exception.message}", exception)
-                            continuation.resumeWithException(exception)
-                        }
-                    }
-                )
+        withContext(Dispatchers.Main) {
+            if (isInitialized && msalApp != null) {
+                return@withContext Result.success(Unit)
             }
 
-            msalApp = app
-            isInitialized = true
-            initializationError = null
-            Result.success(Unit)
+            try {
+                val app = suspendCancellableCoroutine<IMultipleAccountPublicClientApplication> { continuation ->
+                    PublicClientApplication.createMultipleAccountPublicClientApplication(
+                        context.applicationContext,
+                        R.raw.auth_config,
+                        object : IPublicClientApplication.IMultipleAccountApplicationCreatedListener {
+                            override fun onCreated(application: IMultipleAccountPublicClientApplication) {
+                                Log.i(TAG, "MSAL (Multi-Account) initialized successfully")
+                                continuation.resume(application)
+                            }
 
-        } catch (e: Exception) {
-            val errorMsg = "MSAL initialization failed: ${e.message}"
-            Log.e(TAG, errorMsg, e)
-            initializationError = errorMsg
-            isInitialized = false
-            Result.failure(e)
+                            override fun onError(exception: MsalException) {
+                                Log.e(TAG, "MSAL initialization failed: ${exception.message}", exception)
+                                continuation.resumeWithException(exception)
+                            }
+                        }
+                    )
+                }
+
+                msalApp = app
+                isInitialized = true
+                initializationError = null
+                Result.success(Unit)
+
+            } catch (e: Exception) {
+                val errorMsg = "MSAL initialization failed: ${e.message}"
+                Log.e(TAG, errorMsg, e)
+                initializationError = errorMsg
+                isInitialized = false
+                Result.failure(e)
+            }
         }
     }
 

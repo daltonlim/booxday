@@ -202,8 +202,9 @@ class MultiAccountSyncViewModel(
     // ═══════════════════════════════════════════════════════════════════════════
 
     init {
-        // Initialize Outlook MSAL on ViewModel creation
+        // Initialize Outlook MSAL after initial canvas draw settles
         viewModelScope.launch {
+            com.boox.day.editor.DrawCanvas.awaitStartupCanvasReady(2_000L)
             outlookAuthManager.initialize()
         }
     }

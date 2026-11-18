@@ -74,6 +74,7 @@ const val SHOW_WELCOME_COMPLETED_KEY = "show_welcome_completed"
 @ExperimentalComposeUiApi
 @ExperimentalFoundationApi
 class MainActivity : ComponentActivity() {
+    private var hasPausedOnce = false
 
     /**
      * Sets the app's display density ([AppDensity.dpi], fixed per screen size) on the activity and
@@ -164,65 +165,71 @@ class MainActivity : ComponentActivity() {
         // latest changes and brought dismissed setup dots back
         val appContext = applicationContext
         if (!GlobalAppSettings.loaded) {
-        // Initialize with defaults + correct showWelcome flag for immediate Router use
-        val initialSettings = AppSettings(version = 1, showWelcome = !showWelcomeCompleted)
+            // Initialize with defaults + correct showWelcome flag for immediate Router use
+            val initialSettings = AppSettings(version = 1, showWelcome = !showWelcomeCompleted)
 
-        // Update GlobalAppSettings with initial values (Router can now decide correctly)
-        GlobalAppSettings.update(initialSettings)
+            // Update GlobalAppSettings with initial values (Router can now decide correctly)
+            GlobalAppSettings.update(initialSettings)
+        }
 
-        // Load full settings async from Room database
+        // Load full settings async from Room database, then defer Keystore + notification work until canvas is drawn
         this.lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                // The user's OpenRouter key lives in encrypted storage (Phase 3, Oct 2026), read
-                // here off the main thread
-                val savedApiKey = UserApiKeyStore.getOpenRouterKey(appContext)
-                val fullSettings = KvProxy(appContext).get(APP_SETTINGS_KEY, AppSettings.serializer())
-                if (fullSettings == null && savedApiKey != null) {
-                    GlobalAppSettings.update(GlobalAppSettings.current.copy(userOpenRouterApiKey = savedApiKey))
+            if (!GlobalAppSettings.loaded) {
+                try {
+                    val fullSettings = KvProxy(appContext).get(APP_SETTINGS_KEY, AppSettings.serializer())
+                    if (fullSettings != null) {
+                        GlobalAppSettings.update(fullSettings)
+                        Log.i(TAG, "Full settings loaded async from Room")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load full settings: ${e.message ?: e.javaClass.simpleName}", e)
+                } finally {
+                    // The main screen waits for this (Router): set on every path, found, none or failed
+                    GlobalAppSettings.loaded = true
                 }
-                if (fullSettings != null) {
-                    // Merge: keep the API key, use everything else from Room
-                    val mergedSettings = if (savedApiKey != null) {
-                        fullSettings.copy(userOpenRouterApiKey = savedApiKey)
-                    } else {
-                        fullSettings
-                    }
-                    GlobalAppSettings.update(mergedSettings)
-                    Log.i(TAG, "Full settings loaded async from Room")
+            }
 
-                    // Phase 3 (Oct 2026): older versions also kept the OpenRouter key in the stored
-                    // settings JSON; save once without it (the key stays in UserApiKeyStore)
-                    val storedJson = KvRepository(appContext).get(APP_SETTINGS_KEY)?.value
-                    if (storedJson?.contains(KvProxy.OPENROUTER_KEY_FIELD) == true) {
-                        KvProxy(appContext).setAppSettings(mergedSettings)
-                    }
+            // Defer Keystore initialization, ML Kit language sync, and notification scheduling
+            // until startup canvas handoff completes so cold startup stays uncontended.
+            DrawCanvas.awaitStartupCanvasReady(2_000L)
 
-                    // Sync handwriting language from settings (restore user's language preference)
-                    DigitalInkModelManager.syncLanguageFromSettings()
+            try {
+                val savedApiKey = UserApiKeyStore.getOpenRouterKey(appContext)
+                val currentSettings = GlobalAppSettings.current
+                val mergedSettings = if (savedApiKey != null && currentSettings.userOpenRouterApiKey != savedApiKey) {
+                    currentSettings.copy(userOpenRouterApiKey = savedApiKey).also {
+                        GlobalAppSettings.update(it)
+                    }
+                } else {
+                    currentSettings
+                }
 
-                    // Schedule notifications based on full settings (now that we have them)
-                    if (mergedSettings.taskNotificationsEnabled) {
-                        TaskRepository(appContext).scheduleNotificationsForExistingTasks()
-                    }
-                    if (mergedSettings.eventNotificationsEnabled) {
-                        LocalEventRepository(appContext).scheduleNotificationsForUpcomingEvents()
-                    }
+                // Phase 3 (Oct 2026): older versions also kept the OpenRouter key in the stored
+                // settings JSON; save once without it (the key stays in UserApiKeyStore)
+                val storedJson = KvRepository(appContext).get(APP_SETTINGS_KEY)?.value
+                if (storedJson?.contains(KvProxy.OPENROUTER_KEY_FIELD) == true) {
+                    KvProxy(appContext).setAppSettings(mergedSettings)
+                }
+
+                // Sync handwriting language from settings (restore user's language preference)
+                DigitalInkModelManager.syncLanguageFromSettings()
+
+                // Schedule notifications based on full settings (now that we have them)
+                if (mergedSettings.taskNotificationsEnabled) {
+                    TaskRepository(appContext).scheduleNotificationsForExistingTasks()
+                }
+                if (mergedSettings.eventNotificationsEnabled) {
+                    LocalEventRepository(appContext).scheduleNotificationsForUpcomingEvents()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to load full settings: ${e.message ?: e.javaClass.simpleName}", e)
-            } finally {
-                // The main screen waits for this (Router): set on every path, found, none or failed
-                GlobalAppSettings.loaded = true
+                Log.e(TAG, "Failed post-startup settings work: ${e.message ?: e.javaClass.simpleName}", e)
             }
         }
-        }
-
-        EditorSettingCacheManager.init(applicationContext)
-        // Note: Task/event notification scheduling moved to async settings load block above
 
         // Legacy stroke migration only runs if user has file permission (accesses old external storage location)
         if (hasFilePermission(this)) {
             this.lifecycleScope.launch(Dispatchers.IO) {
+                DrawCanvas.awaitStartupCanvasReady(2_500L)
                 reencodeStrokePointsToSB1(this@MainActivity)
             }
         }
@@ -271,8 +278,8 @@ class MainActivity : ComponentActivity() {
         // Reset DPI when returning from external activities (e.g., MSAL Outlook auth)
         // External activities (Chrome Custom Tabs, system browser) may use default system DPI,
         // which can corrupt our custom DPI setting. Reset it every time we resume.
-        // propagateToCompose=true forces Compose to pick up the restored density.
-        setAppDensity(propagateToCompose = true)
+        // propagateToCompose=true forces Compose to pick up the restored density when returning after pause.
+        setAppDensity(propagateToCompose = hasPausedOnce)
 
         if (StartupDiagnostics.hasFatalFailure()) {
             return
@@ -285,18 +292,19 @@ class MainActivity : ComponentActivity() {
         // In-app updates: continue after the "Install unknown apps" screen; daily check
         com.boox.day.update.AppUpdateGate.onResume(this)
 
-        // NOTIFICATION FIX: Detect permission changes from Android Settings
-        // When user grants POST_NOTIFICATIONS outside the app (via system settings),
-        // the permission launcher callback doesn't fire. We need to detect this on resume.
+        // NOTIFICATION FIX: Detect permission changes when returning from Android Settings
+        if (!hasPausedOnce) return
         lifecycleScope.launch(Dispatchers.IO) {
-            // CRITICAL: Load settings from persistent storage, not in-memory cache
-            // GlobalAppSettings.current may still be defaults on fast resume
-            val settings = try {
-                KvProxy(applicationContext).get(APP_SETTINGS_KEY, AppSettings.serializer())
-                    ?: AppSettings(version = 1)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load settings from storage: ${e.message ?: e.javaClass.simpleName}, using defaults", e)
-                AppSettings(version = 1)
+            val settings = if (GlobalAppSettings.loaded) {
+                GlobalAppSettings.current
+            } else {
+                try {
+                    KvProxy(applicationContext).get(APP_SETTINGS_KEY, AppSettings.serializer())
+                        ?: AppSettings(version = 1)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load settings from storage: ${e.message ?: e.javaClass.simpleName}, using defaults", e)
+                    AppSettings(version = 1)
+                }
             }
 
             // Only check if notifications are enabled in settings
@@ -385,6 +393,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onPause() {
+        hasPausedOnce = true
         DrawCanvas.cancelAndroidStylusInput()
         super.onPause()
 

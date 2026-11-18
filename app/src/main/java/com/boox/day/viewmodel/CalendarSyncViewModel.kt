@@ -89,10 +89,11 @@ class CalendarSyncViewModel(application: Application) : AndroidViewModel(applica
     val lastSyncTime: StateFlow<Long?> = _lastSyncTime.asStateFlow()
 
     init {
-        checkSignInStatus()
-        loadSyncPreferences()
+        viewModelScope.launch(Dispatchers.IO) {
+            com.boox.day.editor.DrawCanvas.awaitStartupCanvasReady(2_000L)
+            checkSignInStatus()
+            loadSyncPreferences()
 
-        viewModelScope.launch {
             // Skip legacy sync if multi-account system is active —
             // MultiAccountSyncViewModel handles startup sync via MainScreen LaunchedEffect
             if (hasMultiAccountAccounts()) {

@@ -143,31 +143,22 @@ fun Router() {
     }
 
     // Pre-load data during splash screen with adaptive timing
-    // Minimum 3s for logo visibility, max ~5s (3000ms min + 2000ms timeout)
     LaunchedEffect(Unit) {
         val startTime = System.currentTimeMillis()
         logRouter.i("PERF: Splash pre-loading START")
 
-        // Track completion of all preload tasks
-        val preloadComplete = CompletableDeferred<Unit>()
-
         coroutineScope {
-            // 1. Minimum splash duration (ensures logo is visible, prevents flash)
-            val minDuration = launch { delay(3000) }
-
-            // 2. The user's own AI key (nothing is fetched)
-            val apiJob = launch(Dispatchers.IO) {
-                if (OpenRouterClient.hasApiKey()) {
-                    logRouter.i("PERF: AI key available at startup")
-                } else {
-                    logRouter.i("PERF: Startup without AI key - using local key prompt flow")
-                }
-            }
-
-            // 3. Pre-create today's pages
+            // Pre-create today's pages if not already preloaded by BooxDayApp
             val pagesJob = launch(Dispatchers.IO) {
                 try {
                     val today = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                    if (GlobalAppSettings.preloadedDate == today &&
+                        GlobalAppSettings.preloadedMemosPageId != null &&
+                        GlobalAppSettings.preloadedTasksPageId != null
+                    ) {
+                        logRouter.i("PERF: Today's pages already preloaded in BooxDayApp")
+                        return@launch
+                    }
                     val dayPageRepo = DayPageRepository(context)
                     val taskRepo = TaskRepository(context)
 
@@ -187,11 +178,7 @@ fun Router() {
                 }
             }
 
-            // Wait for minimum duration (always)
-            minDuration.join()
-
             // Wait for critical preloads with timeout
-            // API key is non-critical (app works without it), pages are critical
             withTimeoutOrNull(2000) {
                 pagesJob.join()
             }
@@ -203,10 +190,7 @@ fun Router() {
         logRouter.i("PERF: Splash pre-loading COMPLETE (${System.currentTimeMillis() - startTime}ms)")
         if (shouldWaitForCanvasHandoff) {
             // A drawing surface shows black until its first picture: the splash stays until the
-            // canvas has drawn once (the black Memos flash at launch, Nov 2026). The main screen's
-            // first frames come first, behind the splash (on a cold start they take ~2 s), then at
-            // most a second more
-            withFrameNanos { }
+            // canvas has drawn once (the black Memos flash at launch, Nov 2026).
             withFrameNanos { }
             val drawn = DrawCanvas.awaitStartupCanvasDrawn(STARTUP_CANVAS_DRAWN_TIMEOUT_MS)
             logRouter.i("STARTUP_FRAME: canvas drawn before the splash left: $drawn")

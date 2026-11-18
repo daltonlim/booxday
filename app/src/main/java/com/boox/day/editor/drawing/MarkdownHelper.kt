@@ -13,6 +13,9 @@ import io.noties.markwon.Markwon
 object MarkdownHelper {
 
     private const val TAG = "MarkdownHelper"
+    @Volatile
+    private var appContext: Context? = null
+    @Volatile
     private var markwon: Markwon? = null
 
     /**
@@ -20,9 +23,17 @@ object MarkdownHelper {
      * Call this in Application.onCreate() or MainActivity.onCreate()
      */
     fun init(context: Context) {
-        if (markwon == null) {
-            markwon = Markwon.create(context.applicationContext)
-            Log.i(TAG, "Markwon initialized successfully")
+        appContext = context.applicationContext
+    }
+
+    private fun getOrCreateMarkwon(): Markwon? {
+        markwon?.let { return it }
+        val ctx = appContext ?: return null
+        return synchronized(this) {
+            markwon ?: Markwon.create(ctx).also {
+                markwon = it
+                Log.i(TAG, "Markwon initialized successfully")
+            }
         }
     }
 
@@ -31,7 +42,7 @@ object MarkdownHelper {
      * Returns plain text if Markwon is not initialized.
      */
     fun toSpanned(markdown: String): Spanned {
-        val result = markwon?.toMarkdown(markdown)
+        val result = getOrCreateMarkwon()?.toMarkdown(markdown)
         if (result != null) {
             Log.d(TAG, "Converted markdown (${markdown.length} chars) to Spanned with ${result.getSpans(0, result.length, Any::class.java).size} spans")
             return result
@@ -44,7 +55,7 @@ object MarkdownHelper {
      * Check if markdown rendering is available
      */
     fun isInitialized(): Boolean {
-        val initialized = markwon != null
+        val initialized = getOrCreateMarkwon() != null
         Log.d(TAG, "isInitialized() = $initialized")
         return initialized
     }

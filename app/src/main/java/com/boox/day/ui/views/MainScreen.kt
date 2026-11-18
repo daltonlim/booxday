@@ -413,6 +413,7 @@ fun MainScreen(
 
     // Initialize TaskOcrService for Digital Ink recognition
     LaunchedEffect(Unit) {
+        DrawCanvas.awaitStartupCanvasReady(2_000L)
         TaskOcrService.initialize(context, scope)
     }
 
@@ -547,6 +548,7 @@ fun MainScreen(
     // OCR startup fixes - crash recovery and bug fixes
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
+            DrawCanvas.awaitStartupCanvasReady(2_000L)
             // Crash recovery - reset any pages stuck in IN_PROGRESS status from previous session
             val recoveredCount = ocrRepository.recoverFromCrash()
             if (recoveredCount > 0) {
@@ -592,7 +594,7 @@ fun MainScreen(
     }
 
     // Get current page ID for selected date
-    var currentPageId by remember { mutableStateOf<String?>(null) }
+    var currentPageId by remember { mutableStateOf(initialMemosPageId(today)) }
     var isMemosPageLoading by remember { mutableStateOf(false) }
 
     // OPTION C: EditorTabManager for single toolbar architecture
@@ -612,6 +614,7 @@ fun MainScreen(
     // Load local calendars on startup and ensure Default exists
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
+            DrawCanvas.awaitStartupCanvasReady(1_800L)
             localCalendarRepository.ensureDefaultExists()
             localCalendars = localCalendarRepository.getAll()
         }
@@ -619,6 +622,7 @@ fun MainScreen(
 
     // Load connected accounts on startup (for source filter icons)
     LaunchedEffect(Unit) {
+        DrawCanvas.awaitStartupCanvasReady(1_800L)
         multiAccountSyncViewModel.loadAccounts()
     }
 
@@ -636,6 +640,7 @@ fun MainScreen(
     // but were counted by the old unfiltered badge query, causing badge/grid mismatch.
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
+            DrawCanvas.awaitStartupCanvasReady(2_000L)
             val db = com.boox.day.data.db.AppDatabase.getDatabase(context)
             val cleaned = db.calendarEventDao().deleteLegacyEvents()
             if (cleaned > 0) {
@@ -712,7 +717,7 @@ fun MainScreen(
     // Tasks pagination and data for the selected date
     var currentTaskPageIndex by remember { mutableStateOf(0) }
     var currentTaskPageInfo by remember { mutableStateOf<TaskPageInfo?>(null) }
-    var currentTaskPageId by remember { mutableStateOf<String?>(null) }
+    var currentTaskPageId by remember { mutableStateOf(initialTasksPageId(today)) }
     var currentTasks by remember { mutableStateOf<List<Task>>(emptyList()) }
     var isTasksPageLoading by remember { mutableStateOf(false) }
     var pendingTaskPageNavigationIndex by remember { mutableStateOf<Int?>(null) }
@@ -1577,6 +1582,7 @@ fun MainScreen(
 
     // Consolidated badge data loading when month changes (parallel pre-warming)
     LaunchedEffect(currentYearMonth) {
+        DrawCanvas.awaitStartupCanvasReady(1_800L)
         if (PERF_LOGS) Log.i(TAG, "PERF: CacheWarmupCoordinator START for $currentYearMonth")
         val startTime = System.currentTimeMillis()
         val result = withContext(Dispatchers.IO) {
@@ -1718,6 +1724,7 @@ fun MainScreen(
     // OPTIMIZATION: Silent scan - only notify on errors, not on success
     // This avoids blocking user perception with snack messages on every app launch
     LaunchedEffect(Unit) {
+        DrawCanvas.awaitStartupCanvasReady(2_000L)
         val hasPerm = hasFilePermission(context)
         val isAlreadyScanning = GlobalAppSettings.isBooxNotesScanning
         Log.d("BooxScanDebug", "Startup Boox scan check: hasPerm=$hasPerm, isAlreadyScanning=$isAlreadyScanning")
@@ -1974,17 +1981,6 @@ fun MainScreen(
         val initialTaskPageIndex = pendingTaskPageNavigationIndex ?: 0
         currentTaskPageIndex = initialTaskPageIndex
 
-        val materializationResult = appRepository.taskRepository.materializeRecurringTasksForDate(
-            date = selectedDate,
-            canvasHeight = GlobalAppSettings.tasksCanvasHeight
-        )
-        if (materializationResult.changed) {
-            Log.i(
-                TAG,
-                "PERF: recurring materialization date=$selectedDate created=${materializationResult.createdCount}"
-            )
-        }
-
         // Check for pre-loaded ID - set immediately so canvas can mount faster
         val preloadedDate = GlobalAppSettings.preloadedDate
         val preloadedTasksId = GlobalAppSettings.preloadedTasksPageId
@@ -2007,6 +2003,9 @@ fun MainScreen(
             }
             isTasksPageLoading = false
         } else {
+            if (currentEditorTab != EditorTab.Tasks) {
+                DrawCanvas.awaitStartupCanvasDrawn(800L)
+            }
             isTasksPageLoading = true
             val earlyTaskPageId = withContext(Dispatchers.IO) {
                 appRepository.taskRepository.getOrCreateTaskPageId(selectedDate, initialTaskPageIndex)
@@ -2014,6 +2013,22 @@ fun MainScreen(
             if (earlyTaskPageId != null) {
                 currentTaskPageId = earlyTaskPageId
             }
+        }
+
+        if (currentEditorTab != EditorTab.Tasks) {
+            DrawCanvas.awaitStartupCanvasReady(1_800L)
+        }
+        val materializationResult = withContext(Dispatchers.IO) {
+            appRepository.taskRepository.materializeRecurringTasksForDate(
+                date = selectedDate,
+                canvasHeight = GlobalAppSettings.tasksCanvasHeight
+            )
+        }
+        if (materializationResult.changed) {
+            Log.i(
+                TAG,
+                "PERF: recurring materialization date=$selectedDate created=${materializationResult.createdCount}"
+            )
         }
 
         // Still fetch tasks list (needed for rendering) - but canvas can already mount
@@ -2049,7 +2064,8 @@ fun MainScreen(
         if (isMemosPageLoading || isTasksPageLoading) return@LaunchedEffect
         if (currentPageId == null) return@LaunchedEffect
 
-        // Small delay to not compete with initial rendering (reduced from 100ms for faster preload start)
+        DrawCanvas.awaitStartupCanvasReady(2_000L)
+        // Small delay to not compete with initial rendering
         kotlinx.coroutines.delay(50)
 
         // Trigger preloading of neighboring days' preview bitmaps (Memos + Tasks)
@@ -6210,6 +6226,9 @@ private fun PersistentCanvasHost(
         ResizeHiddenPageInPlace(memosPage.value, isActive = currentTab == EditorTab.Memos, surfaceSize = surfaceSize)
         val latestOnMemosPageChanged by rememberUpdatedState(onMemosPageChanged)
         LaunchedEffect(memosPageId, width, height) {
+            if (currentTab != EditorTab.Memos && memosPage.value == null) {
+                DrawCanvas.awaitStartupCanvasReady(1_800L)
+            }
             val currentPage = memosPage.value
             val currentState = memosState.value
             val currentHistory = memosHistory.value
@@ -6406,6 +6425,9 @@ private fun PersistentCanvasHost(
         // ============================================================================
         ResizeHiddenPageInPlace(tasksPage.value, isActive = currentTab == EditorTab.Tasks, surfaceSize = surfaceSize)
         LaunchedEffect(tasksPageId, width, height) {
+            if (currentTab != EditorTab.Tasks && tasksPage.value == null) {
+                DrawCanvas.awaitStartupCanvasReady(1_800L)
+            }
             val currentPage = tasksPage.value
             val currentState = tasksState.value
             val currentHistory = tasksHistory.value
@@ -6622,10 +6644,9 @@ private fun PersistentCanvasHost(
             }
         }
 
-        // Guard: wait until both memo/task objects are initialized
-        if (memosPage.value == null || memosState.value == null || memosHistory.value == null || memosControlTower.value == null ||
-            tasksPage.value == null || tasksState.value == null || tasksHistory.value == null || tasksControlTower.value == null
-        ) {
+        // Guard: wait until the active tab's objects are initialized (inactive tab initializes right after startup)
+        val activeReady = if (currentTab == EditorTab.Memos) memosReady else tasksReady
+        if (!activeReady) {
             return@BoxWithConstraints
         }
 
@@ -9171,3 +9192,10 @@ private fun PocketAgendaForDay(eventsViewModel: EventsViewModel, date: String, o
         onOpenList = onOpenList
     )
 }
+
+private fun initialMemosPageId(today: String): String? =
+    GlobalAppSettings.preloadedMemosPageId.takeIf { GlobalAppSettings.preloadedDate == today }
+
+private fun initialTasksPageId(today: String): String? =
+    GlobalAppSettings.preloadedTasksPageId.takeIf { GlobalAppSettings.preloadedDate == today }
+

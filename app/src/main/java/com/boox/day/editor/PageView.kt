@@ -288,6 +288,9 @@ class PageView(
             val oldId = currentPageId
 
             currentPageId = newPageId
+            if (DrawCanvas.activePageId == oldId) {
+                DrawCanvas.activePageId = newPageId
+            }
             loadRedrawPendingPageId = newPageId
             coroutineScope.launch {
                 updateOnExit(oldId)
@@ -371,6 +374,24 @@ class PageView(
         val bookId = pageFromDb?.notebookId
         val loadingPageId = currentPageId
 
+        if (PageDataManager.validatePageDataLoaded(loadingPageId)) {
+            val ignoredTextIds = TextBoxState.globalSelectedTextBoxId?.let { listOf(it) } ?: emptyList()
+            drawAreaScreenCoordinates(Rect(0, 0, viewWidth, viewHeight), ignoredTextAnnotationIds = ignoredTextIds)
+            clearLoadRedrawPending(loadingPageId)
+            if (DrawCanvas.activePageId == loadingPageId) {
+                coroutineScope.launch(Dispatchers.Main.immediate) {
+                    DrawCanvas.forceUpdate.emit(null)
+                }
+            }
+            coroutineScope.launch(Dispatchers.Default) {
+                delay(10)
+                PageDataManager.reduceCache(20)
+                if (bookId.isNotNull())
+                    cacheNeighbors(appRepository, currentPageId, bookId)
+            }
+            return
+        }
+
         loadingJob = coroutineScope.launch(Dispatchers.IO) {
             try {
                 val timeToLoad = measureTimeMillis {
@@ -379,11 +400,15 @@ class PageView(
                     logCache.d("Got page data (PageView.loadPage). id $currentPageId")
                 }
                 logCache.d("All strokes loaded in $timeToLoad ms")
-                // TODO: If we put it in loadPage(…) sometimes it will try to refresh
-                //  without seeing strokes, I have no idea why.
                 coroutineScope.launch(Dispatchers.Main.immediate) {
+                    if (currentPageId == loadingPageId) {
+                        val ignoredTextIds = TextBoxState.globalSelectedTextBoxId?.let { listOf(it) } ?: emptyList()
+                        drawAreaScreenCoordinates(Rect(0, 0, viewWidth, viewHeight), ignoredTextAnnotationIds = ignoredTextIds)
+                    }
                     clearLoadRedrawPending(loadingPageId)
-                    DrawCanvas.forceUpdate.emit(null)
+                    if (DrawCanvas.activePageId == loadingPageId) {
+                        DrawCanvas.forceUpdate.emit(null)
+                    }
                 }
                 logCache.d("Loaded page from persistent layer $currentPageId")
                 if (!PageDataManager.validatePageDataLoaded(currentPageId))
@@ -724,30 +749,34 @@ class PageView(
             return true
         }
 
-        // PRIORITY 2: Load from disk asynchronously (avoid blocking main thread)
-        val pageIdSnapshot = currentPageId
-        val scrollSnapshot = scroll
-        val zoomSnapshot = zoomLevel.value
-        coroutineScope.launch(Dispatchers.IO) {
-            val bitmapFromDisk = loadPersistBitmap(
-                context,
-                pageIdSnapshot,
-                scrollSnapshot,
-                zoomSnapshot,
-                true
-            )
-            if (bitmapFromDisk == null || bitmapFromDisk.isRecycled) return@launch
-            PageDataManager.putPreviewBitmap(pageIdSnapshot, bitmapFromDisk)
-            coroutineScope.launch(Dispatchers.Main.immediate) {
-                if (currentPageId != pageIdSnapshot) return@launch
-                if (PageDataManager.drawPreviewToCanvas(
-                        pageIdSnapshot,
-                        windowedCanvas,
-                        windowedCanvas.width,
-                        windowedCanvas.height
-                    )
-                ) {
-                    DrawCanvas.forceUpdate.emit(null)
+        // PRIORITY 1.5: If page data is already preloaded in memory, skip async disk preview load
+        // (loadPage() will draw the live strokes immediately without a duplicate preview redraw).
+        if (!PageDataManager.validatePageDataLoaded(currentPageId)) {
+            // PRIORITY 2: Load from disk asynchronously (avoid blocking main thread)
+            val pageIdSnapshot = currentPageId
+            val scrollSnapshot = scroll
+            val zoomSnapshot = zoomLevel.value
+            coroutineScope.launch(Dispatchers.IO) {
+                val bitmapFromDisk = loadPersistBitmap(
+                    context,
+                    pageIdSnapshot,
+                    scrollSnapshot,
+                    zoomSnapshot,
+                    true
+                )
+                if (bitmapFromDisk == null || bitmapFromDisk.isRecycled) return@launch
+                PageDataManager.putPreviewBitmap(pageIdSnapshot, bitmapFromDisk)
+                coroutineScope.launch(Dispatchers.Main.immediate) {
+                    if (currentPageId != pageIdSnapshot || !isLoadRedrawPending) return@launch
+                    if (PageDataManager.drawPreviewToCanvas(
+                            pageIdSnapshot,
+                            windowedCanvas,
+                            windowedCanvas.width,
+                            windowedCanvas.height
+                        ) && DrawCanvas.activePageId == pageIdSnapshot
+                    ) {
+                        DrawCanvas.forceUpdate.emit(null)
+                    }
                 }
             }
         }

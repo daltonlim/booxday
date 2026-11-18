@@ -14,7 +14,9 @@ import androidx.room.Relation
 import androidx.room.Transaction
 import androidx.room.Update
 import com.boox.day.data.model.BackgroundType
+import java.util.Collections
 import java.util.Date
+import java.util.LinkedHashMap
 import java.util.UUID
 
 @Entity(
@@ -121,20 +123,40 @@ interface PageDao {
 class PageRepository(context: Context) {
     var db = AppDatabase.getDatabase(context).pageDao()
 
+    companion object {
+        private val pageCache = Collections.synchronizedMap(
+            object : LinkedHashMap<String, Page>(32, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Page>): Boolean {
+                    return size > 64
+                }
+            }
+        )
+
+        fun invalidateCache(pageId: String? = null) {
+            if (pageId != null) pageCache.remove(pageId) else pageCache.clear()
+        }
+    }
+
     fun create(page: Page): Long {
-        return db.create(page)
+        val result = db.create(page)
+        pageCache[page.id] = page
+        return result
     }
 
     fun updateScroll(id: String, scroll: Int) {
+        pageCache[id]?.let { pageCache[id] = it.copy(scroll = scroll) }
         return db.updateScroll(id, scroll)
     }
 
     fun getById(pageId: String): Page? {
-        return db.getById(pageId)
+        pageCache[pageId]?.let { return it }
+        return db.getById(pageId)?.also { pageCache[pageId] = it }
     }
 
     fun getByIds(ids: List<String>): List<Page> {
-        return db.getByIds(ids)
+        return db.getByIds(ids).also { pages ->
+            pages.forEach { pageCache[it.id] = it }
+        }
     }
 
     fun getWithStrokeById(pageId: String): PageWithStrokes {
@@ -154,10 +176,12 @@ class PageRepository(context: Context) {
     }
 
     fun update(page: Page) {
+        pageCache[page.id] = page
         return db.update(page)
     }
 
     fun delete(pageId: String) {
+        pageCache.remove(pageId)
         return db.delete(pageId)
     }
 
@@ -175,15 +199,19 @@ class PageRepository(context: Context) {
     }
 
     suspend fun setLinkedEventId(pageId: String, eventId: String) {
+        pageCache.remove(pageId)
         db.setLinkedEventId(pageId, eventId)
     }
 
     suspend fun clearLinkedEventId(pageId: String) {
+        pageCache.remove(pageId)
         db.clearLinkedEventId(pageId)
     }
 
     fun updateUpdatedAt(pageId: String) {
-        db.updateUpdatedAt(pageId, java.util.Date())
+        val now = java.util.Date()
+        pageCache[pageId]?.let { pageCache[pageId] = it.copy(updatedAt = now) }
+        db.updateUpdatedAt(pageId, now)
     }
 }
 

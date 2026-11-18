@@ -6,11 +6,20 @@ import android.os.Build
 import android.util.Log
 import com.boox.day.ai.TaskAiContextBuilderV1
 import com.boox.day.autoimage.AutoImages
+import com.boox.day.data.AppRepository
+import com.boox.day.data.PageDataManager
 import com.boox.day.data.datastore.AppSettings
+import com.boox.day.data.datastore.EditorSettingCacheManager
+import com.boox.day.data.datastore.GlobalAppSettings
 import com.boox.day.data.db.AppDatabase
 import com.boox.day.data.db.CalendarEventRepository
+import com.boox.day.data.db.DayPageRepository
 import com.boox.day.data.db.KvProxy
+import com.boox.day.data.db.PageRepository
+import com.boox.day.data.db.TaskRepository
+import com.boox.day.editor.DrawCanvas
 import com.boox.day.editor.drawing.MarkdownHelper
+import com.boox.day.editor.utils.loadPersistBitmap
 import com.boox.day.notifications.NotificationChannelManager
 import com.boox.day.notifications.NotificationPermissionHelper
 import com.boox.day.notifications.TaskNotificationScheduler
@@ -52,7 +61,6 @@ class BooxDayApp : Application() {
         super.onCreate()
         // First, so a crash anywhere after this leaves a report for the next start
         com.boox.day.diagnostics.CrashReporter.install(this)
-        com.boox.day.share.TasksFeedNotifier.start(this, applicationScope)
         PerfProbe.install(this)  // TEMPORARY: MainScreen JIT measurement
         if (!runFatalStartupStep(
                 stage = StartupStage.HIDDEN_API,
@@ -71,11 +79,81 @@ class BooxDayApp : Application() {
         // closed the app (1.0.33 to 1.0.38). Not fatal: drawing falls back to BooxDay's own strokes.
         runSafeStartupStep("Onyx pen library setup") { OnyxCompat.initResManager(this) }
 
+        // Kick off critical settings + today's page preload immediately on IO before MainActivity starts
+        runSafeStartupStep("Critical startup preload") { preloadCriticalStartupData() }
+
+        // Lightweight in-memory context initializers (no disk/DB/WorkManager on main thread)
         runSafeStartupStep("OpenRouter key") { initUserOpenRouterKey() }
-        runSafeStartupStep("Removed features cleanup") { com.boox.day.startup.RemovedFeaturesCleanup.run(this) }
         runSafeStartupStep("Tasks pages") { initTaskPagination() }
         runSafeStartupStep("Task AI context") { TaskAiContextBuilderV1.initialize(this) }
         runSafeStartupStep("Markdown helper") { MarkdownHelper.init(this) }
+        runSafeStartupStep("Digital Ink singletons") { initDigitalInkSingletons() }
+
+        // Defer all non-critical background maintenance, indexing, and scheduling until the
+        // first canvas frame is ready so cold startup has uncontended CPU and SQLite access.
+        applicationScope.launch(Dispatchers.IO) {
+            DrawCanvas.awaitStartupCanvasReady(2_500L)
+            runDeferredStartupTasks()
+        }
+    }
+
+    private fun preloadCriticalStartupData() {
+        val quickPrefs = getSharedPreferences(QUICK_SETTINGS_PREFS, Context.MODE_PRIVATE)
+        val showWelcomeCompleted = quickPrefs.getBoolean(SHOW_WELCOME_COMPLETED_KEY, false)
+        if (!GlobalAppSettings.loaded) {
+            GlobalAppSettings.update(AppSettings(version = 1, showWelcome = !showWelcomeCompleted))
+        }
+        EditorSettingCacheManager.init(this)
+        applicationScope.launch(Dispatchers.IO) {
+            try {
+                val fullSettings = KvProxy(this@BooxDayApp).get(APP_SETTINGS_KEY, AppSettings.serializer())
+                if (fullSettings != null) {
+                    GlobalAppSettings.update(fullSettings)
+                }
+            } catch (e: Exception) {
+                Log.e("BooxDayApp", "Failed to preload settings: ${e.message}")
+            } finally {
+                GlobalAppSettings.loaded = true
+            }
+
+            try {
+                val today = java.time.LocalDate.now().toString()
+                val dayPageRepo = DayPageRepository(this@BooxDayApp)
+                val taskRepo = TaskRepository(this@BooxDayApp)
+                val pageRepo = PageRepository(this@BooxDayApp)
+
+                val memosPageId = dayPageRepo.getOrCreatePageForDate(today)
+                val (tasks, _) = taskRepo.getOrCreateTasksForPage(today, 0)
+                val tasksPageId = tasks.firstOrNull()?.pageId
+
+                if (memosPageId != null && tasksPageId != null) {
+                    pageRepo.getByIds(listOf(memosPageId, tasksPageId))
+                    GlobalAppSettings.setPreloadedPageIds(today, memosPageId, tasksPageId)
+                    val activePageId = if (GlobalAppSettings.current.startTab == AppSettings.StartTab.Tasks) {
+                        tasksPageId
+                    } else {
+                        memosPageId
+                    }
+                    PageDataManager.requestPageLoad(AppRepository(this@BooxDayApp), activePageId)
+                    if (!PageDataManager.hasPreviewBitmap(activePageId)) {
+                        loadPersistBitmap(this@BooxDayApp, activePageId, null, null, true)?.let { bmp ->
+                            if (!bmp.isRecycled) {
+                                PageDataManager.putPreviewBitmap(activePageId, bmp)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("BooxDayApp", "Failed to preload today pages: ${e.message}")
+            }
+        }
+    }
+
+    private fun runDeferredStartupTasks() {
+        runSafeStartupStep("Tasks feed notifier") { com.boox.day.share.TasksFeedNotifier.start(this, applicationScope) }
+        runSafeStartupStep("OpenRouter catalog & status") { initDeferredAiStores() }
+        runSafeStartupStep("Removed features cleanup") { com.boox.day.startup.RemovedFeaturesCleanup.run(this) }
+        runSafeStartupStep("Tasks pages normalize") { normalizeStrayTaskDays() }
         runSafeStartupStep("Notification channels") { initNotificationChannels() }
         runSafeStartupStep("Boox notification mode") { initBooxWorkManagerMode() }
         runSafeStartupStep("Notification scheduling") { initNotificationScheduling() }
@@ -107,6 +185,9 @@ class BooxDayApp : Application() {
     private fun initTaskPagination() {
         com.boox.day.tasks.TaskPagination.init(this)
         com.boox.day.tasks.TaskPagination.restoreAtStartup()
+    }
+
+    private fun normalizeStrayTaskDays() {
         applicationScope.launch(Dispatchers.IO) {
             try {
                 com.boox.day.tasks.TaskPagination.normalizeStrayDays()
@@ -133,6 +214,13 @@ class BooxDayApp : Application() {
     /** The user's own OpenRouter key (the only key AI features use), read from encrypted storage off the main thread. */
     private fun initUserOpenRouterKey() {
         com.boox.day.security.UserOpenRouterKey.init(this)
+        // Oct 2026: the once-only "AI and your calendar" notice (ui/CalendarAiNotice)
+        com.boox.day.ui.CalendarAiNotice.init(this)
+        // Oct 2026: whether Wi-Fi is on, to say why an AI request failed
+        com.boox.day.api.NetworkStatus.init(this)
+    }
+
+    private fun initDeferredAiStores() {
         applicationScope.launch(Dispatchers.IO) {
             com.boox.day.security.UserOpenRouterKey.ensureLoaded()
         }
@@ -142,10 +230,6 @@ class BooxDayApp : Application() {
         com.boox.day.api.AiPickStatus.init(this)
         // 2 Nov 2026: the last AI failure a dialog showed, with the tries behind it
         com.boox.day.api.ai.LastAiProblem.init(this)
-        // Oct 2026: the once-only "AI and your calendar" notice (ui/CalendarAiNotice)
-        com.boox.day.ui.CalendarAiNotice.init(this)
-        // Oct 2026: whether Wi-Fi is on, to say why an AI request failed
-        com.boox.day.api.NetworkStatus.init(this)
     }
 
     private fun scheduleBackgroundSync() {
@@ -352,10 +436,7 @@ class BooxDayApp : Application() {
      *
      * Both are fire-and-forget - if they fail, Task extraction gracefully degrades.
      */
-    private fun initDigitalInk() {
-        // Pre-download Digital Ink model (background, non-blocking)
-        DigitalInkModelManager.preDownloadAsync(applicationScope)
-
+    private fun initDigitalInkSingletons() {
         // Initialize TaskTextExtractor singleton (for PageDataManager hooks)
         TaskTextExtractor.getInstance(this, applicationScope)
 
@@ -365,6 +446,11 @@ class BooxDayApp : Application() {
         // Initialize TaskTextIndexer on the app scope (plan Phase 2, Oct 2026): MainScreen used to
         // create it first with its composition scope, so typed-task indexing died with that screen.
         TaskTextIndexer.getInstance(this, applicationScope)
+    }
+
+    private fun initDigitalInk() {
+        // Pre-download Digital Ink model (background, non-blocking)
+        DigitalInkModelManager.preDownloadAsync(applicationScope)
 
         // Initialize HandwritingNormalizerFactory and pre-load English normalizer
         applicationScope.launch(Dispatchers.IO) {

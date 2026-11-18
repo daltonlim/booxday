@@ -105,10 +105,9 @@ class EventsViewModel(application: Application) : AndroidViewModel(application) 
     val sourceFilter: StateFlow<CalendarSourceFilter> = _sourceFilter.asStateFlow()
 
     init {
-        // Initialize Outlook MSAL for event operations
-        // This is required because EventsViewModel has its own OutlookAuthManager instance
-        // (separate from MainScreen's instance which is initialized via MultiAccountSyncViewModel)
+        // Initialize Outlook MSAL for event operations after startup canvas draw settles
         viewModelScope.launch {
+            com.boox.day.editor.DrawCanvas.awaitStartupCanvasReady(2_000L)
             outlookAuthManager.initialize()
         }
 
