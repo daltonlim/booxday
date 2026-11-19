@@ -203,6 +203,7 @@ fun EditorGestureReceiver(
                                     // A two-finger drag goes on while a finger stays, and through a
                                     // dropped contact: e-ink panels lose a finger for a few ms
                                     if (gestureState.gestureMode != GestureMode.Pan) break
+                                    if (tracker.maxConcurrentPressed <= 1) break
                                     if (tracker.pressedCount() == 0) {
                                         val reland = withTimeoutOrNull(PAN_RELAND_GRACE_MS) {
                                             var next = awaitPointerEvent()
@@ -281,22 +282,37 @@ fun EditorGestureReceiver(
                                     rectangleBounds = gestureState.calculateRectangleBounds()
                                     showHint("Selection mode!", coroutineScope, 1500)
                                 }
-                                gestureState.checkSmoothScrolling()
-                                gestureState.checkContinuousZoom()
                                 val onMemos = DrawCanvas.memoModeChanged.value
+                                if (!onMemos) {
+                                    gestureState.checkSmoothScrolling()
+                                }
+                                gestureState.checkContinuousZoom()
                                 if (onMemos) {
-                                    // Memos: two fingers moving together move the page (no hold first)
+                                    // Memos: two fingers moving together, or one finger dragging vertically, move the page
+                                    val oneFingerVerticalTravel = if (tracker.pressedCount() == 1 && gestureState.getInputCount() == 1) {
+                                        val firstPos = gestureState.getFirstPosition()
+                                        val lastPos = gestureState.getLastPositionIO()
+                                        if (firstPos != null && lastPos != null) {
+                                            val dx = (lastPos.x - firstPos.x).toFloat()
+                                            val dy = (lastPos.y - firstPos.y).toFloat()
+                                            if (abs(dy) >= panStartPx && abs(dy) > abs(dx) * 1.3f) Offset(0f, dy) else null
+                                        } else null
+                                    } else null
                                     if (gestureState.gestureMode == GestureMode.Normal && !dragTried &&
-                                        isTwoFingerPan(tracker.pressedTravels(), panStartPx)
+                                        (isTwoFingerPan(tracker.pressedTravels(), panStartPx) || oneFingerVerticalTravel != null)
                                     ) {
                                         val refusal = memoDragRefusal(editorState)
                                         if (refusal != null) {
-                                            if (!dragRefusalLogged) log.i("PAN_SPIKE: two fingers moved together, no drag: $refusal")
+                                            if (!dragRefusalLogged) log.i("PAN_SPIKE: finger moved, no drag: $refusal")
                                             dragRefusalLogged = true
                                         } else {
-                                            dragTried = true  // once per gesture (the page may fit the view)
-                                            val (a, b) = tracker.pressedTravels()
-                                            val travel = (a + b) / 2f
+                                            dragTried = true  // once per gesture
+                                            val travel = if (oneFingerVerticalTravel != null) {
+                                                oneFingerVerticalTravel
+                                            } else {
+                                                val (a, b) = tracker.pressedTravels()
+                                                (a + b) / 2f
+                                            }
                                             if (controlTower.navigator.beginDrag(travel)) {
                                                 dragNavigator = controlTower.navigator
                                                 gestureState.gestureMode = GestureMode.Pan

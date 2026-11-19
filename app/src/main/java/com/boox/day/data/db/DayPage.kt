@@ -476,6 +476,43 @@ class DayPageRepository(context: Context) {
         return newPageId
     }
 
+    /**
+     * Copy selected [strokes] and [images] onto the open memo page of [targetDate].
+     */
+    fun copySelectionToDate(targetDate: String, strokes: List<Stroke>, images: List<Image>): String? {
+        if (strokes.isEmpty() && images.isEmpty()) return null
+        val targetPageId = getOrCreatePageForDate(targetDate)
+        val now = Date()
+        if (strokes.isNotEmpty()) {
+            strokeDao.create(
+                strokes.map {
+                    it.copy(
+                        id = UUID.randomUUID().toString(),
+                        pageId = targetPageId,
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                }
+            )
+        }
+        if (images.isNotEmpty()) {
+            imageDao.create(
+                images.map {
+                    it.copy(
+                        id = UUID.randomUUID().toString(),
+                        pageId = targetPageId,
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                }
+            )
+        }
+        com.boox.day.data.PageDataManager.removePage(targetPageId)
+        com.boox.day.data.PageDataManager.invalidatePreviewCache(targetPageId)
+        _noteDateChanged.tryEmit(targetDate)
+        return targetPageId
+    }
+
     private fun attachPageToTargetDate(targetDate: String, pageId: String) {
         val targetDayPage = dayPageDao.getByDate(targetDate)
         if (targetDayPage == null || targetDayPage.pageIds.isEmpty()) {

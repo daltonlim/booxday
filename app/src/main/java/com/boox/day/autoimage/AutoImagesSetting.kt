@@ -75,7 +75,7 @@ fun AutoImagesSetting() {
 
     SettingCard(
         title = "Auto-save images",
-        description = "Saves the memo page you opened last (on a blank page, the memo shown before) and today's to-do list as pictures every time they change, " +
+        description = "Saves the memo or tasks page you opened last to memo.png (on a blank page, the page shown before) and today's to-do list as pictures every time they change, " +
             "to use as a wallpaper or screensaver, or in a synced folder."
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(EInkTheme.Global.spacingSmall)) {

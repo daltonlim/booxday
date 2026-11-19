@@ -574,14 +574,14 @@ object EInkTheme {
         val background = Colors.background
         val controlColumnWidth = 152.dp  // Actual compact layout width
         val controlColumnBackground = Colors.background
-        val controlColumnBorderWidth = 0.5.dp
+        val controlColumnBorderWidth = 1.5.dp
         val controlColumnBorderColor = Colors.borderStrong  // Kaleid 3 visible
         val rowHeight = 56.dp
         val rowCount = 10
         val rowDividerColor = Colors.borderStrong
-        val rowDividerThickness = 0.5.dp
+        val rowDividerThickness = 1.5.dp
         val checkboxSize = 24.dp
-        val checkboxBorderWidth = 1.dp
+        val checkboxBorderWidth = 2.dp
         val checkboxColor = Colors.primary
         val checkboxCheckedBackground = Colors.primary
         val checkboxCheckedForeground = Colors.background
@@ -605,7 +605,7 @@ object EInkTheme {
         val chevronTouchCompact = 39.dp                   // Chevron tap area
 
         // Icon sizes (visual)
-        val checkboxIconCompact = 22.dp                   // Checkbox visual
+        val checkboxIconCompact = 24.dp                   // Checkbox visual
         val priorityIconCompact = 23.dp                   // Priority visual
         val calendarIconCompact = 29.dp                   // Calendar visual
         val repeatIconCompact = 22.dp                     // Repeat badge visual
@@ -1127,7 +1127,7 @@ object EInkTheme {
     /** Checkbox */
     object Checkbox {
         val size = 24.dp
-        val borderWidth = 1.dp
+        val borderWidth = 2.dp
         val borderColor = Colors.primary
         val checkedBackground = Colors.primary
         val checkmarkColor = Colors.background

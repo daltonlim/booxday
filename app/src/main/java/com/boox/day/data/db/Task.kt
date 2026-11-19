@@ -5609,8 +5609,8 @@ class TaskRepository(internal val context: Context) {
                     )
 
                     // Resolve Parent-Child Relationship: link to wherever the parent moved;
-                    // orphan it if the parent wasn't part of this batch (its old slot is wiped)
-                    val newParentId = source.parentTaskId?.let { sourceToTargetMap[it] }
+                    // if the parent stayed on its own row, keep its existing ID
+                    val newParentId = source.parentTaskId?.let { sourceToTargetMap[it] ?: it }
                     taskDao.setParentTask(op.targetTaskId, newParentId)
                 }
 
@@ -5645,6 +5645,66 @@ class TaskRepository(internal val context: Context) {
             invalidateTaskCache(date)
             false
         }
+    }
+
+    /**
+     * Move [taskId] (and its subtasks on the same page, when it is a parent task) to [targetRowIndex]
+     * on its current page, shifting intermediate rows and migrating handwritten strokes + metadata.
+     * Returns the updated [Task] at its new slot, or null if no move occurred.
+     */
+    fun moveTaskToRowOnPage(
+        taskId: String,
+        targetRowIndex: Int,
+        canvasHeight: Float
+    ): Task? {
+        val task = taskDao.getById(taskId) ?: return null
+        val pageTasks = taskDao.getTasksForPage(task.dayDate, task.taskPageIndex).sortedBy { it.rowIndex }
+        if (pageTasks.isEmpty() || targetRowIndex !in pageTasks.indices) return null
+
+        val block = if (task.parentTaskId == null) {
+            listOf(task) + pageTasks.filter { it.parentTaskId == task.id }
+        } else {
+            listOf(task)
+        }
+        val blockIds = block.map { it.id }.toSet()
+        val remaining = pageTasks.filterNot { it.id in blockIds }
+        val insertIndex = targetRowIndex.coerceIn(0, remaining.size)
+        val newOrder = remaining.take(insertIndex) + block + remaining.drop(insertIndex)
+        if (newOrder.size != pageTasks.size) return null
+
+        val items = pageTasks.indices
+            .filter { i -> newOrder[i].id != pageTasks[i].id }
+            .map { i ->
+                TaskReorderItem(
+                    sourceTask = newOrder[i],
+                    targetPageIndex = task.taskPageIndex,
+                    targetRowIndex = pageTasks[i].rowIndex,
+                    targetTaskId = pageTasks[i].id
+                )
+            }
+        if (items.isEmpty()) return task
+        if (!reorderTasksWithStrokes(date = task.dayDate, items = items, canvasHeight = canvasHeight)) {
+            return null
+        }
+        val newSlotIndex = newOrder.indexOfFirst { it.id == task.id }.takeIf { it >= 0 } ?: return null
+        return taskDao.getById(pageTasks[newSlotIndex].id)
+    }
+
+    /**
+     * Move [taskId] up ([delta] < 0) or down ([delta] > 0) by one position on its current page.
+     */
+    fun moveTaskByRowDelta(
+        taskId: String,
+        delta: Int,
+        canvasHeight: Float
+    ): Task? {
+        val task = taskDao.getById(taskId) ?: return null
+        val pageTasks = taskDao.getTasksForPage(task.dayDate, task.taskPageIndex).sortedBy { it.rowIndex }
+        val currentIdx = pageTasks.indexOfFirst { it.id == task.id }
+        if (currentIdx < 0) return null
+        val targetIdx = (currentIdx + if (delta < 0) -1 else 1).coerceIn(0, pageTasks.lastIndex)
+        if (targetIdx == currentIdx) return null
+        return moveTaskToRowOnPage(taskId, targetIdx, canvasHeight)
     }
 
     /**

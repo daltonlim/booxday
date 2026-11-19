@@ -532,7 +532,9 @@ fun MoveMemoPageDialog(
     currentDate: String,
     onMoveToDate: (String) -> Unit,
     onCopyToDate: (String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialCopyMode: Boolean = false,
+    copyOnly: Boolean = false
 ) {
     val theme = EInkTheme.TaskDatePickerDialog
     val today = remember { LocalDate.now() }
@@ -568,7 +570,11 @@ fun MoveMemoPageDialog(
                     modifier = Modifier.padding(theme.dialogPadding)
                 ) {
                     Text(
-                        text = "Move Page",
+                        text = when {
+                            copyOnly -> "Copy Notes to Date"
+                            initialCopyMode -> "Copy Page"
+                            else -> "Move Page"
+                        },
                         fontSize = theme.titleFontSize,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.fillMaxWidth(),
@@ -636,29 +642,34 @@ fun MoveMemoPageDialog(
 
                         Spacer(modifier = Modifier.width(theme.buttonRowSpacing))
 
-                        Box(
-                            modifier = Modifier
-                                .height(EInkTheme.Button.height)
-                                .background(
-                                    if (canAct) EInkTheme.Button.background else EInkTheme.Colors.lightGray,
-                                    RoundedCornerShape(theme.buttonCornerRadius)
+                        val copyPrimary = initialCopyMode || copyOnly
+                        if (!copyOnly) {
+                            Box(
+                                modifier = Modifier
+                                    .height(EInkTheme.Button.height)
+                                    .background(
+                                        if (!canAct) EInkTheme.Colors.lightGray
+                                        else if (!copyPrimary) EInkTheme.Button.background
+                                        else EInkTheme.Button.background,
+                                        RoundedCornerShape(theme.buttonCornerRadius)
+                                    )
+                                    .border(EInkTheme.Divider.thickness, EInkTheme.Button.borderColor, RoundedCornerShape(theme.buttonCornerRadius))
+                                    .noRippleClickable(enabled = canAct) {
+                                        selectedDate?.let { if (copyPrimary) onMoveToDate(it) else onCopyToDate(it) }
+                                    }
+                                    .padding(horizontal = theme.buttonHorizontalPadding),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    if (copyPrimary) "Move" else "Copy",
+                                    color = if (canAct) EInkTheme.Button.textColor else EInkTheme.Colors.darkGray,
+                                    fontSize = EInkTheme.Typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
                                 )
-                                .border(EInkTheme.Divider.thickness, EInkTheme.Button.borderColor, RoundedCornerShape(theme.buttonCornerRadius))
-                                .noRippleClickable(enabled = canAct) {
-                                    selectedDate?.let { onCopyToDate(it) }
-                                }
-                                .padding(horizontal = theme.buttonHorizontalPadding),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                "Copy",
-                                color = if (canAct) EInkTheme.Button.textColor else EInkTheme.Colors.darkGray,
-                                fontSize = EInkTheme.Typography.bodyMedium,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
+                            }
 
-                        Spacer(modifier = Modifier.width(theme.buttonRowSpacing))
+                            Spacer(modifier = Modifier.width(theme.buttonRowSpacing))
+                        }
 
                         Box(
                             modifier = Modifier
@@ -668,13 +679,13 @@ fun MoveMemoPageDialog(
                                     RoundedCornerShape(theme.buttonCornerRadius)
                                 )
                                 .noRippleClickable(enabled = canAct) {
-                                    selectedDate?.let { onMoveToDate(it) }
+                                    selectedDate?.let { if (copyPrimary) onCopyToDate(it) else onMoveToDate(it) }
                                 }
                                 .padding(horizontal = theme.buttonHorizontalPadding),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                "Move",
+                                if (copyPrimary) "Copy" else "Move",
                                 color = if (canAct) EInkTheme.Button.primaryTextColor else EInkTheme.Colors.darkGray,
                                 fontSize = EInkTheme.Typography.bodyMedium,
                                 fontWeight = FontWeight.Medium

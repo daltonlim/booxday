@@ -22,6 +22,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -31,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.boox.day.data.datastore.AppSettings.PocketCalendarView
 import com.boox.day.data.datastore.GlobalAppSettings
 import com.boox.day.data.db.KvProxy
 import com.boox.day.editor.DrawCanvas
@@ -39,8 +41,10 @@ import com.boox.day.ui.components.EInkToggle
 import com.boox.day.ui.components.SettingCard
 import com.boox.day.ui.theme.EInkTheme
 import com.boox.day.ui.theme.LayoutProfiles
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -132,6 +136,52 @@ fun FullScreenEffects(tabManager: EditorTabManager, onEnter: () -> Unit) {
         if (!isOn) DrawCanvas.forceUnfreeze()
     }
 }
+
+/**
+ * Pocket screens (Palma, Nov 2026): reopens the calendar view last chosen (week, month or hidden, i.e.
+ * full screen) and saves every change. Nothing is saved until the start view is back, so the week
+ * shown while the page settles never overwrites it.
+ */
+@Composable
+fun PocketCalendarViewMemory(monthShown: Boolean, showMonth: () -> Unit) {
+    val currentMonthShown by rememberUpdatedState(monthShown)
+    val context = LocalContext.current
+    var restored by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { GlobalAppSettings.loaded }.first { it }
+        val settings = GlobalAppSettings.current
+        when (settings.pocketCalendarView) {
+            PocketCalendarView.Month -> if (!settings.openInFullScreen) {
+                DrawCanvas.surfaceSize.first { it != null }
+                showMonth()
+                withTimeoutOrNull(2_000L) { snapshotFlow { currentMonthShown }.first { it } }
+            }
+            PocketCalendarView.Hidden -> if (!settings.openInFullScreen) {
+                DrawCanvas.surfaceSize.first { it != null }
+                delay(SURFACE_SETTLE_MS)
+                FullScreenState.expandAtStart()
+                withTimeoutOrNull(2_000L) { snapshotFlow { FullScreenState.isOn }.first { it } }
+            }
+            PocketCalendarView.Week -> {}
+        }
+        if (settings.openInFullScreen) {
+            withTimeoutOrNull(START_FULL_SCREEN_TIMEOUT_MS) { snapshotFlow { FullScreenState.isOn }.first { it } }
+        }
+        restored = true
+    }
+    val view = when {
+        FullScreenState.isOn -> PocketCalendarView.Hidden
+        monthShown -> PocketCalendarView.Month
+        else -> PocketCalendarView.Week
+    }
+    LaunchedEffect(view, restored) {
+        if (!restored || view == GlobalAppSettings.current.pocketCalendarView) return@LaunchedEffect
+        KvProxy(context).setAppSettings(GlobalAppSettings.current.copy(pocketCalendarView = view))
+    }
+}
+
+/** How long the start waits for "Open in full screen" before it saves views again. */
+private const val START_FULL_SCREEN_TIMEOUT_MS = 10_000L
 
 /** Preferences card: open the app in full screen (Nov 2026, AppSettings.openInFullScreen). */
 @Composable

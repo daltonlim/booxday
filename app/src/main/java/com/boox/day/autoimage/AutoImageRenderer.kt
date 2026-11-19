@@ -89,7 +89,7 @@ object AutoImageRenderer {
             val canvas = Canvas(bitmap)
             canvas.drawColor(Color.WHITE)
             val rowHeight = (rowsHeight - topOffset) / rowCount
-            val linePaint = Paint().apply { color = Color.LTGRAY; strokeWidth = 1.5f }
+            val linePaint = Paint().apply { color = Color.DKGRAY; strokeWidth = 2.5f }
             for (i in 1..rowCount) {
                 val y = topOffset + i * rowHeight
                 canvas.drawLine(0f, y, widthPx.toFloat(), y, linePaint)
@@ -168,7 +168,7 @@ object AutoImageRenderer {
         val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             style = Paint.Style.STROKE
-            strokeWidth = max(2f, box / 12f)
+            strokeWidth = max(3.5f, box / 8f)
         }
         canvas.drawRoundRect(rect, box / 6f, box / 6f, boxPaint)
         if (row.completed) {

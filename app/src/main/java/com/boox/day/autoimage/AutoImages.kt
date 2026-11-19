@@ -70,10 +70,17 @@ object AutoImages {
     private const val TASKS_LIST = "todo-list.png"
     private const val QUIET_MS = 5_000L
 
-    /** Wait after a memo page is opened, so scrolling through memos saves only the one it stops on. */
+    /** Wait after a memo or tasks page is opened, so scrolling through pages saves only the one it stops on. */
     private const val OPENED_DELAY_MS = 2_000L
+    private const val KEY_OPENED_KIND = "opened_kind"
+    private const val KIND_MEMO = "memo"
+    private const val KIND_TASKS = "tasks"
     private const val KEY_OPENED_MEMO = "opened_memo"
     private const val KEY_SHOWN_MEMO = "shown_memo"
+    private const val KEY_OPENED_TASKS_DATE = "opened_tasks_date"
+    private const val KEY_OPENED_TASKS_INDEX = "opened_tasks_index"
+    private const val KEY_SHOWN_TASKS_DATE = "shown_tasks_date"
+    private const val KEY_SHOWN_TASKS_INDEX = "shown_tasks_index"
 
     /** Ink too far from a row to count as written in it; the app's own rule decides inside. */
     private const val MIN_TASKS_GEOMETRY_PX = 10f
@@ -115,9 +122,27 @@ object AutoImages {
     /** The Memos canvas shows [pageId]: memo.png becomes that page. */
     fun memoOpened(context: Context, pageId: String) {
         val prefs = prefs(context)
-        if (prefs.getString(KEY_OPENED_MEMO, null) == pageId) return
-        prefs.edit().putString(KEY_OPENED_MEMO, pageId).apply()
-        if (settings(context).notes) requestSave(context, delayMs = OPENED_DELAY_MS)
+        if (prefs.getString(KEY_OPENED_MEMO, null) == pageId && prefs.getString(KEY_OPENED_KIND, KIND_MEMO) == KIND_MEMO) return
+        prefs.edit()
+            .putString(KEY_OPENED_MEMO, pageId)
+            .putString(KEY_OPENED_KIND, KIND_MEMO)
+            .apply()
+        if (settings(context).anyOn) requestSave(context, delayMs = OPENED_DELAY_MS)
+    }
+
+    /** The Tasks canvas shows [date] page [pageIndex]: memo.png and todo-page-*.png follow that Tasks page. */
+    fun tasksOpened(context: Context, date: String, pageIndex: Int) {
+        val prefs = prefs(context)
+        if (prefs.getString(KEY_OPENED_TASKS_DATE, null) == date &&
+            prefs.getInt(KEY_OPENED_TASKS_INDEX, 0) == pageIndex &&
+            prefs.getString(KEY_OPENED_KIND, KIND_MEMO) == KIND_TASKS
+        ) return
+        prefs.edit()
+            .putString(KEY_OPENED_TASKS_DATE, date)
+            .putInt(KEY_OPENED_TASKS_INDEX, pageIndex)
+            .putString(KEY_OPENED_KIND, KIND_TASKS)
+            .apply()
+        if (settings(context).anyOn) requestSave(context, delayMs = OPENED_DELAY_MS)
     }
 
     fun requestSave(context: Context, force: Boolean = false, delayMs: Long = 0L) {
@@ -142,8 +167,17 @@ object AutoImages {
             val keep = mutableSetOf<String>()
             var written = 0
             try {
-                if (choice.notes) {
-                    (openedMemoImage(app, width, height) ?: lastEditedMemoImage(app, width, height))?.let { image ->
+                val openedKind = prefs(app).getString(KEY_OPENED_KIND, KIND_MEMO)
+                val preferTasksForMemoFile = (choice.tasks && !choice.notes) || (openedKind == KIND_TASKS)
+                if (choice.notes || choice.tasks) {
+                    val primaryImage = if (preferTasksForMemoFile) {
+                        openedTasksImage(app, saved, today, width, height, ppi)
+                            ?: if (choice.notes) (openedMemoImage(app, width, height) ?: lastEditedMemoImage(app, width, height)) else null
+                    } else {
+                        (openedMemoImage(app, width, height) ?: lastEditedMemoImage(app, width, height))
+                            ?: if (choice.tasks) openedTasksImage(app, saved, today, width, height, ppi) else null
+                    }
+                    primaryImage?.let { image ->
                         keep += MEMO_FILE
                         if (save(app, MEMO_FILE, image, choice, force)) written++
                     }
@@ -224,6 +258,67 @@ object AutoImages {
     private fun toScreen(image: Bitmap, width: Int, height: Int): Bitmap {
         if (image.width == width && image.height == height) return image
         return AutoImageRenderer.fitToScreen(image, width, height).also { image.recycle() }
+    }
+
+    /**
+     * The Tasks page opened last (or the last non-blank Tasks page shown, else today's first non-blank
+     * Tasks page), rendered in the user's chosen style ([TasksImageStyle.HANDWRITING] or [TasksImageStyle.LIST]).
+     */
+    private suspend fun openedTasksImage(
+        context: Context,
+        saved: AppSettings,
+        today: LocalDate,
+        width: Int,
+        height: Int,
+        ppi: Int
+    ): Bitmap? {
+        val prefs = prefs(context)
+        val openedDate = prefs.getString(KEY_OPENED_TASKS_DATE, null) ?: today.toString()
+        val openedIndex = prefs.getInt(KEY_OPENED_TASKS_INDEX, 0)
+        if (saved.autoImages.tasksStyle == TasksImageStyle.HANDWRITING) {
+            singleTaskPageImage(context, saved, openedDate, openedIndex, width, height)?.let { image ->
+                prefs.edit()
+                    .putString(KEY_SHOWN_TASKS_DATE, openedDate)
+                    .putInt(KEY_SHOWN_TASKS_INDEX, openedIndex)
+                    .apply()
+                return image
+            }
+            val shownDate = prefs.getString(KEY_SHOWN_TASKS_DATE, null)
+            val shownIndex = prefs.getInt(KEY_SHOWN_TASKS_INDEX, 0)
+            if (shownDate != null && (shownDate != openedDate || shownIndex != openedIndex)) {
+                singleTaskPageImage(context, saved, shownDate, shownIndex, width, height)?.let { return it }
+            }
+            taskPageImages(context, saved, today, width, height)?.firstOrNull()?.let { return it }
+        }
+        val targetDay = runCatching { LocalDate.parse(openedDate) }.getOrDefault(today)
+        return taskListImage(context, saved, targetDay, width, height, ppi)
+    }
+
+    private suspend fun singleTaskPageImage(
+        context: Context,
+        saved: AppSettings,
+        date: String,
+        pageIndex: Int,
+        width: Int,
+        height: Int
+    ): Bitmap? {
+        val canvasHeight = saved.tasksInkCanvasHeight
+        val topOffset = saved.tasksInkTopOffset
+        if (canvasHeight <= topOffset + MIN_TASKS_GEOMETRY_PX) return null
+        val database = AppDatabase.getDatabase(context)
+        val dao = database.taskDao()
+        val handwriting = HandwrittenRows(context, database.openHelper.readableDatabase)
+        val rowCount = TaskPagination.rowsPerPage(date)
+        val rowsHeight = TaskPagination.rowsHeight(canvasHeight, rowCount, topOffset)
+        val columnPx = TASKS_CONTROL_COLUMN_WIDTH.value * AppDensity.dpi / 160f
+        val tasks = dao.getTasksForPage(date, pageIndex)
+        val pageId = tasks.firstOrNull()?.pageId ?: return null
+        val rows = tasks.map { task -> taskRow(task, handwriting.inRow(pageId, date, task.rowIndex)) }
+        if (rows.none { it.hasContent }) return null
+        val page = AutoImageRenderer.tasksPage(
+            context, MemoPageContent.load(context, pageId), rows, rowCount, rowsHeight, topOffset, width, columnPx
+        )
+        return toScreen(page, width, height)
     }
 
     /**

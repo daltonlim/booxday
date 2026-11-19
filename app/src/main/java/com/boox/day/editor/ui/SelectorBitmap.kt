@@ -18,7 +18,10 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -38,9 +41,13 @@ import com.boox.day.editor.DrawCanvas
 import com.boox.day.editor.EditorControlTower
 import com.boox.day.editor.state.ResizeHandle
 import com.boox.day.editor.ui.toolbar.ToolbarButton
+import com.boox.day.ui.SnackConf
+import com.boox.day.ui.SnackState
 import com.boox.day.ui.noRippleClickable
 import com.boox.day.ui.theme.EInkTheme
+import com.boox.day.utils.DateTimeFormatUtils
 import compose.icons.FeatherIcons
+import compose.icons.feathericons.Calendar
 import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Scissors
 
@@ -61,6 +68,26 @@ fun SelectedBitmap(
     val density = LocalDensity.current
     val selectionState = controlTower.getSnapshotOfSelectionState()
     if (selectionState.selectedBitmap == null) return
+    var showCopyToDateDialog by remember { mutableStateOf(false) }
+
+    if (showCopyToDateDialog && controlTower.dayDate != null) {
+        MoveMemoPageDialog(
+            currentDate = controlTower.dayDate!!,
+            initialCopyMode = true,
+            copyOnly = true,
+            onMoveToDate = {},
+            onCopyToDate = { targetDate ->
+                showCopyToDateDialog = false
+                if (controlTower.copySelectionToDate(targetDate)) {
+                    val label = DateTimeFormatUtils.formatDateFullFromString(targetDate)
+                    SnackState.globalSnackFlow.tryEmit(
+                        SnackConf(text = "Notes copied to $label", duration = SnackConf.DURATION_QUICK)
+                    )
+                }
+            },
+            onDismiss = { showCopyToDateDialog = false }
+        )
+    }
 
     var selectionDisplaceOffset =
         controlTower.page.applyZoom(selectionState.selectionDisplaceOffset ?: return)
@@ -178,8 +205,9 @@ fun SelectedBitmap(
         val miniButtonSize = 35  // Increased from 30 (15% larger)
         val miniIconSize = 28.dp  // Increased from 24dp (15% larger)
         // Base buttons: Delete, Recognize, Cut, Copy, Duplicate (resize via corner handles)
-        // +1 if Convert to Tasks callback is provided
-        val buttonCount = 5 + (if (onConvertSelectionToTasks != null) 1 else 0) + (if (onScheduleSelection != null) 1 else 0)
+        // +1 if dayDate is present (Copy to Date), +1 if Convert to Tasks, +1 if Schedule
+        val hasDayDate = controlTower.dayDate != null && onConvertSelectionToTasks != null
+        val buttonCount = 5 + (if (hasDayDate) 1 else 0) + (if (onConvertSelectionToTasks != null) 1 else 0) + (if (onScheduleSelection != null) 1 else 0)
         val toolbarPadding = 3
 
         // If we can calculate offset of buttons show selection handling tools
@@ -269,6 +297,16 @@ fun SelectedBitmap(
                         modifier = Modifier.size(miniButtonSize.dp),
                         iconSize = miniIconSize
                     )
+                    if (hasDayDate) {
+                        ToolbarButton(
+                            vectorIcon = FeatherIcons.Calendar,
+                            contentDescription = "Copy to Date",
+                            isSelected = false,
+                            onSelect = { showCopyToDateDialog = true },
+                            modifier = Modifier.size(miniButtonSize.dp),
+                            iconSize = miniIconSize
+                        )
+                    }
                     // Convert Selection to Tasks button
                     if (onConvertSelectionToTasks != null) {
                         ToolbarButton(

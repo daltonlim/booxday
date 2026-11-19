@@ -46,8 +46,13 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import com.boox.day.R
 import com.boox.day.data.datastore.GlobalAppSettings
 import com.boox.day.data.db.Task
@@ -111,13 +116,19 @@ fun TasksControlColumn(
     onChevronTap: (Task) -> Unit,
     onChevronLongPress: (Task) -> Unit,
     onLongPressRow: (Task) -> Unit,
+    onReorderRow: ((Task, Int) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    var columnHeightPx by remember { mutableStateOf(0) }
+    var dragTargetRow by remember { mutableStateOf<Int?>(null) }
+    val borderColor = EInkTheme.TasksTab.controlColumnBorderColor
+    val borderWidthDp = EInkTheme.TasksTab.controlColumnBorderWidth
     Column(
         modifier = modifier
             .width(TASKS_CONTROL_COLUMN_WIDTH)
             .fillMaxHeight()
             .background(EInkTheme.TasksTab.controlColumnBackground)
+            .onSizeChanged { columnHeightPx = it.height }
     ) {
         // Top spacer to match toolbar overlay offset - keeps rows aligned with canvas lines
         Spacer(modifier = Modifier.height(TASKS_TOOLBAR_OFFSET))
@@ -126,6 +137,9 @@ fun TasksControlColumn(
             // key() provides stable identity to reduce unnecessary recomposition
             key(task.id) {
                 val hasContent = taskHasContent(task)
+                val rowHeightPx = if (tasks.isNotEmpty() && columnHeightPx > 0) {
+                    (columnHeightPx.toFloat() / tasks.size).coerceAtLeast(1f)
+                } else 0f
                 // Use extracted, stable composable to skip recomposition
                 TaskControlRow(
                     isCompleted = task.isCompleted,
@@ -134,6 +148,7 @@ fun TasksControlColumn(
                     hasContent = hasContent,
                     rowIndex = index,
                     totalRows = tasks.size,
+                    isDragTarget = dragTargetRow == index,
                     onCheckboxToggle = { onCheckboxToggle(task) },
                     onCheckboxLongPress = onCheckboxLongPress,
                     onPriorityChange = { newPriority -> onPriorityChange(task, newPriority) },
@@ -141,6 +156,17 @@ fun TasksControlColumn(
                     onChevronTap = { onChevronTap(task) },
                     onChevronLongPress = { onChevronLongPress(task) },
                     onLongPressRow = { onLongPressRow(task) },
+                    onChevronVerticalDrag = if (onReorderRow != null && hasContent && rowHeightPx > 0f) {
+                        { totalDy, finished ->
+                            val target = (index + (totalDy / rowHeightPx).roundToInt()).coerceIn(0, tasks.lastIndex)
+                            if (finished) {
+                                dragTargetRow = null
+                                if (target != index) onReorderRow(task, target)
+                            } else {
+                                dragTargetRow = target
+                            }
+                        }
+                    } else null,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -163,6 +189,7 @@ private fun TaskControlRow(
     hasContent: Boolean,
     rowIndex: Int,
     totalRows: Int,
+    isDragTarget: Boolean = false,
     onCheckboxToggle: () -> Unit,
     onCheckboxLongPress: () -> Unit,
     onPriorityChange: (String) -> Unit,
@@ -170,11 +197,16 @@ private fun TaskControlRow(
     onChevronTap: () -> Unit,
     onChevronLongPress: () -> Unit,
     onLongPressRow: () -> Unit,
+    onChevronVerticalDrag: ((totalDy: Float, finished: Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var showPriorityMenu by remember { mutableStateOf(false) }
 
-    Column(modifier = modifier) {
+    Column(
+        modifier = modifier.then(
+            if (isDragTarget) Modifier.border(2.dp, EInkTheme.Colors.primary) else Modifier
+        )
+    ) {
         Row(
             modifier = Modifier
                 .weight(1f)
@@ -252,14 +284,46 @@ private fun TaskControlRow(
             // 31 Oct 2026; ticked tasks were locked since the first release)
             val currentOnChevronTap by rememberUpdatedState(onChevronTap)
             val currentOnChevronLongPress by rememberUpdatedState(onChevronLongPress)
+            val currentOnChevronVerticalDrag by rememberUpdatedState(onChevronVerticalDrag)
             Box(
                 modifier = Modifier
                     .size(EInkTheme.TasksTab.chevronTouchCompact)
                     .pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = { currentOnChevronTap() },
-                            onLongPress = { currentOnChevronLongPress() }
-                        )
+                        val dragSlop = viewConfiguration.touchSlop
+                        val longPressMs = viewConfiguration.longPressTimeoutMillis
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            down.consume()
+                            val downTime = System.currentTimeMillis()
+                            var totalDy = 0f
+                            var dragging = false
+                            var longPressed = false
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                if (!change.pressed) {
+                                    change.consume()
+                                    break
+                                }
+                                val dy = change.position.y - change.previousPosition.y
+                                totalDy += dy
+                                if (!dragging && abs(totalDy) > dragSlop && currentOnChevronVerticalDrag != null) {
+                                    dragging = true
+                                }
+                                if (dragging) {
+                                    change.consume()
+                                    currentOnChevronVerticalDrag?.invoke(totalDy, false)
+                                } else if (!longPressed && System.currentTimeMillis() - downTime >= longPressMs) {
+                                    longPressed = true
+                                    currentOnChevronLongPress()
+                                }
+                            }
+                            if (dragging) {
+                                currentOnChevronVerticalDrag?.invoke(totalDy, true)
+                            } else if (!longPressed) {
+                                currentOnChevronTap()
+                            }
+                        }
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -411,15 +475,15 @@ private fun EInkPriorityButton(
                 )
                 .border(
                     width = when {
-                        isCompleted -> 1.dp
-                        priority == "A" -> EInkTheme.Global.borderWidth
-                        priority == "B" -> EInkTheme.Global.borderWidth
-                        priority == "C" -> 1.dp
-                        else -> 1.dp  // None - thin border
+                        isCompleted -> 1.5.dp
+                        priority == "A" -> 2.dp
+                        priority == "B" -> 2.dp
+                        priority == "C" -> 1.5.dp
+                        else -> 1.5.dp
                     },
                     color = when {
                         isCompleted -> EInkTheme.Colors.gray
-                        priority.isEmpty() -> EInkTheme.Colors.gray  // Gray for "none"
+                        priority.isEmpty() -> EInkTheme.Colors.darkGray
                         else -> EInkTheme.Colors.primary
                     },
                     shape = RoundedCornerShape(EInkTheme.Global.cornerRadius)

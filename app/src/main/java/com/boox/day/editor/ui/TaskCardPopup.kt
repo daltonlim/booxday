@@ -73,7 +73,7 @@ import java.util.Locale
 enum class TaskCardScreen(val title: String) {
     Main(""), Text("Text"), Due("Due date"), Reminder("Reminder"), ReminderTime("Reminder time"),
     Repeat("Repeat"), RepeatStart("Repeat starts"), RepeatEnd("Repeat ends"), Subtasks("Subtasks"),
-    List("Task list");
+    List("Task list"), Order("Row on page");
 
     /** Where Back goes; null on the main list (Back closes the card). */
     val parent: TaskCardScreen?
@@ -138,7 +138,11 @@ class TaskCardActions(
     /** "Move", or "Copy" for subtasks (they move with their parent). */
     val moveLabel: String = "Move",
     /** Move the task to that Google Tasks list (its subtasks along); null: can't be changed. */
-    val onListChange: ((String) -> Unit)? = null
+    val onListChange: ((String) -> Unit)? = null,
+    val totalRows: Int = 10,
+    val onMoveUp: (() -> Unit)? = null,
+    val onMoveDown: (() -> Unit)? = null,
+    val onMoveToRow: ((Int) -> Unit)? = null
 )
 
 @Composable
@@ -267,6 +271,7 @@ fun TaskCardContent(
                 }, "Use Date", enabled = picked != null && !picked!!.isBefore(repeatForm.start))
             }
             TaskCardScreen.List -> data.list?.let { ListScreen(it, subtitle, go, actions) }
+            TaskCardScreen.Order -> OrderScreen(task, subtitle, go, actions)
             TaskCardScreen.Subtasks -> {
                 Header(screen.title, subtitle)
                 Body {
@@ -302,6 +307,15 @@ private fun MainList(
         if (titleText != null) actions.onEditText() else go(TaskCardScreen.Text)
     }
     PriorityLine(task.priority, actions.onPriorityChange)
+    if (actions.onMoveUp != null || actions.onMoveDown != null || actions.onMoveToRow != null) {
+        OrderLine(
+            rowIndex = task.rowIndex,
+            totalRows = actions.totalRows,
+            onMoveUp = actions.onMoveUp,
+            onMoveDown = actions.onMoveDown,
+            onOpenPicker = if (actions.onMoveToRow != null) ({ go(TaskCardScreen.Order) }) else null
+        )
+    }
     val due = TaskDueDates.toLocalDate(task.dueDay)
     val overdue = TaskDueDates.isOverdue(task.dueDay, task.isCompleted, today.toString())
     ValueLine(
@@ -340,6 +354,33 @@ private fun ColumnScope.ListScreen(list: TaskCardList, subtitle: String, go: (Ta
         ChoiceLine(name, id == list.currentId) {
             if (id != list.currentId) actions.onListChange?.invoke(id)
             go(TaskCardScreen.Main)
+        }
+    }
+    Footer1({ go(TaskCardScreen.Main) }, "Back")
+}
+
+@Composable
+private fun ColumnScope.OrderScreen(task: Task, subtitle: String, go: (TaskCardScreen) -> Unit, actions: TaskCardActions) {
+    Header(TaskCardScreen.Order.title, subtitle)
+    Body {
+        Note("Tap a row to move this task (and its handwriting) there:")
+        val rows = actions.totalRows.coerceAtLeast(1)
+        for (chunk in (0 until rows).chunked(5)) {
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                for (r in chunk) {
+                    Chip(
+                        text = "${r + 1}",
+                        selected = task.rowIndex == r,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        actions.onMoveToRow?.invoke(r)
+                        go(TaskCardScreen.Main)
+                    }
+                }
+            }
         }
     }
     Footer1({ go(TaskCardScreen.Main) }, "Back")
@@ -603,6 +644,60 @@ private fun PriorityLine(priority: String, onChange: (String) -> Unit) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("None" to "", "A" to "A", "B" to "B", "C" to "C").forEach { (label, value) ->
                 Chip(label, priority == value) { onChange(value) }
+            }
+        }
+    }
+    Thin()
+}
+
+@Composable
+private fun OrderLine(
+    rowIndex: Int,
+    totalRows: Int,
+    onMoveUp: (() -> Unit)?,
+    onMoveDown: (() -> Unit)?,
+    onOpenPicker: (() -> Unit)?
+) {
+    val canUp = onMoveUp != null && rowIndex > 0
+    val canDown = onMoveDown != null && rowIndex < totalRows - 1
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = ROW_HEIGHT)
+            .then(if (onOpenPicker != null) Modifier.noRippleClickable { onOpenPicker() } else Modifier),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("Order", fontSize = EInkTheme.Typography.bodyLarge, color = EInkTheme.Colors.darkGray, modifier = Modifier.width(LABEL_WIDTH))
+        Text(
+            "Row ${rowIndex + 1}",
+            fontSize = EInkTheme.Typography.bodyLarge,
+            color = EInkTheme.Colors.primary,
+            modifier = Modifier.weight(1f)
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .height(EInkTheme.Global.touchTarget)
+                    .widthIn(min = 52.dp)
+                    .background(if (canUp) EInkTheme.Colors.background else EInkTheme.Colors.lightGray, RoundedCornerShape(EInkTheme.Global.cornerRadius))
+                    .border(1.5.dp, if (canUp) EInkTheme.Colors.primary else EInkTheme.Colors.gray, RoundedCornerShape(EInkTheme.Global.cornerRadius))
+                    .noRippleClickable(enabled = canUp) { onMoveUp?.invoke() }
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("↑ Up", fontSize = EInkTheme.Typography.bodyMedium, fontWeight = FontWeight.Bold, color = if (canUp) EInkTheme.Colors.primary else EInkTheme.Colors.darkGray)
+            }
+            Box(
+                Modifier
+                    .height(EInkTheme.Global.touchTarget)
+                    .widthIn(min = 64.dp)
+                    .background(if (canDown) EInkTheme.Colors.background else EInkTheme.Colors.lightGray, RoundedCornerShape(EInkTheme.Global.cornerRadius))
+                    .border(1.5.dp, if (canDown) EInkTheme.Colors.primary else EInkTheme.Colors.gray, RoundedCornerShape(EInkTheme.Global.cornerRadius))
+                    .noRippleClickable(enabled = canDown) { onMoveDown?.invoke() }
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("↓ Down", fontSize = EInkTheme.Typography.bodyMedium, fontWeight = FontWeight.Bold, color = if (canDown) EInkTheme.Colors.primary else EInkTheme.Colors.darkGray)
             }
         }
     }

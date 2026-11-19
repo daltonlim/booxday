@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DriveFileMove
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Share
@@ -218,15 +219,17 @@ fun ToolbarMenu(
 
     // Confirmation dialog states
     var showMovePageDialog by remember { mutableStateOf(false) }
+    var movePageDialogCopyMode by remember { mutableStateOf(false) }
     var showClearPageConfirmation by remember { mutableStateOf(false) }
     var showDeletePageConfirmation by remember { mutableStateOf(false) }
     var showClearMemosConfirmation by remember { mutableStateOf(false) }
     var showClearTasksConfirmation by remember { mutableStateOf(false) }
 
-    // Move Memo Page Dialog
+    // Move / Copy Memo Page Dialog
     if (showMovePageDialog && state.dayDate != null) {
         MoveMemoPageDialog(
             currentDate = state.dayDate!!,
+            initialCopyMode = movePageDialogCopyMode,
             onMoveToDate = { targetDate ->
                 showMovePageDialog = false
                 onClose()
@@ -507,9 +510,20 @@ fun ToolbarMenu(
                         if (activeTab == EditorTab.Memos) {
                             if (state.dayDate != null) {
                                 MenuItem(
-                                    label = "Move Page...",
+                                    label = "Copy Page to Date...",
+                                    icon = Icons.Default.ContentCopy
+                                ) {
+                                    movePageDialogCopyMode = true
+                                    showMovePageDialog = true
+                                }
+
+                                DividerCentered()
+
+                                MenuItem(
+                                    label = "Move Page to Date...",
                                     icon = Icons.AutoMirrored.Filled.DriveFileMove
                                 ) {
+                                    movePageDialogCopyMode = false
                                     showMovePageDialog = true
                                 }
 

@@ -258,6 +258,7 @@ import com.boox.day.ui.calendar.MonthHeaderWithToolbar
 import com.boox.day.ui.calendar.CompactCalendarRows
 import com.boox.day.ui.calendar.CompactDayListPopup
 import com.boox.day.ui.calendar.CompactMonthPopup
+import com.boox.day.ui.PocketCalendarViewMemory
 import com.boox.day.ui.calendar.PocketDayAgenda
 import com.boox.day.ui.calendar.PocketDueRow
 import com.boox.day.autoimage.AutoImages
@@ -977,6 +978,8 @@ fun MainScreen(
         LaunchedEffect(com.boox.day.ui.FullScreenState.isOn) {
             if (com.boox.day.ui.FullScreenState.isOn) showCompactMonthPopup = false
         }
+        // ...the view chosen last time (week, month or hidden) comes back when the app opens
+        if (LayoutProfiles.isPocketScreen) PocketCalendarViewMemory(showCompactMonthPopup) { showCompactMonthPopup = true }
         // ...and the shown month follows the strip when a week step crosses into another month
         LaunchedEffect(compactWeekAnchor) {
             if (compactWeekAnchor.year != currentYear || compactWeekAnchor.monthValue - 1 != currentMonth) {
@@ -6305,8 +6308,10 @@ private fun PersistentCanvasHost(
             val readyHistory = memosHistory.value!!
             
             // Register canvas with tab manager (only needs to happen once per instance)
-            LaunchedEffect(readyState.currentPageId) {
-                withContext(Dispatchers.IO) { AutoImages.memoOpened(context, readyState.currentPageId) }
+            LaunchedEffect(readyState.currentPageId, currentTab) {
+                if (currentTab == EditorTab.Memos) {
+                    withContext(Dispatchers.IO) { AutoImages.memoOpened(context, readyState.currentPageId) }
+                }
             }
             DisposableEffect(readyState) {
                 tabManager.registerMemosCanvas(readyState, readyControl)
@@ -6500,6 +6505,14 @@ private fun PersistentCanvasHost(
             val readyControl = tasksControlTower.value!!
             val readyPage = tasksPage.value!!
             val readyHistory = tasksHistory.value!!
+
+            LaunchedEffect(selectedDate, taskPageInfo?.currentIndex, currentTab) {
+                if (currentTab == EditorTab.Tasks) {
+                    withContext(Dispatchers.IO) {
+                        AutoImages.tasksOpened(context, selectedDate, taskPageInfo?.currentIndex ?: 0)
+                    }
+                }
+            }
             
             DisposableEffect(readyState) {
                 tabManager.registerTasksCanvas(readyState, readyControl)
@@ -6996,6 +7009,21 @@ private fun PersistentCanvasHost(
                                         snackManager.displaySnack(SnackConf(text = "Task cleared successfully", duration = SnackConf.DURATION_STANDARD))
                                     }
                                 }
+                            },
+                            onReorderRow = { task, targetRow ->
+                                com.boox.day.ui.FullScreenState.exitThen {
+                                    scope.launch(Dispatchers.IO) {
+                                        val moved = appRepository.taskRepository.moveTaskToRowOnPage(
+                                            task.id, targetRow, tasksNormalHeight
+                                        )
+                                        if (moved != null) {
+                                            withContext(Dispatchers.Main) {
+                                                onTasksNeedRefresh?.invoke(null)
+                                                TasksCanvasRefresh.request()
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         )
                     }
@@ -7260,6 +7288,49 @@ private fun PersistentCanvasHost(
                                     val message = com.boox.day.tasksync.TaskSyncRun.moveToList(context, cardTask.id, listId)
                                     refreshTaskCard(cardTask)
                                     snackManager.displaySnack(SnackConf(text = message, duration = SnackConf.DURATION_STANDARD))
+                                }
+                            }
+                        },
+                        totalRows = tasks.size.coerceAtLeast(10),
+                        onMoveUp = {
+                            com.boox.day.ui.FullScreenState.exitThen {
+                                scope.launch(Dispatchers.IO) {
+                                    val moved = appRepository.taskRepository.moveTaskByRowDelta(cardTask.id, -1, tasksNormalHeight)
+                                    if (moved != null) {
+                                        withContext(Dispatchers.Main) {
+                                            onTasksNeedRefresh?.invoke(null)
+                                            refreshTaskCard(moved)
+                                            TasksCanvasRefresh.request()
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        onMoveDown = {
+                            com.boox.day.ui.FullScreenState.exitThen {
+                                scope.launch(Dispatchers.IO) {
+                                    val moved = appRepository.taskRepository.moveTaskByRowDelta(cardTask.id, 1, tasksNormalHeight)
+                                    if (moved != null) {
+                                        withContext(Dispatchers.Main) {
+                                            onTasksNeedRefresh?.invoke(null)
+                                            refreshTaskCard(moved)
+                                            TasksCanvasRefresh.request()
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        onMoveToRow = { targetRow ->
+                            com.boox.day.ui.FullScreenState.exitThen {
+                                scope.launch(Dispatchers.IO) {
+                                    val moved = appRepository.taskRepository.moveTaskToRowOnPage(cardTask.id, targetRow, tasksNormalHeight)
+                                    if (moved != null) {
+                                        withContext(Dispatchers.Main) {
+                                            onTasksNeedRefresh?.invoke(null)
+                                            refreshTaskCard(moved)
+                                            TasksCanvasRefresh.request()
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -9198,4 +9269,6 @@ private fun initialMemosPageId(today: String): String? =
 
 private fun initialTasksPageId(today: String): String? =
     GlobalAppSettings.preloadedTasksPageId.takeIf { GlobalAppSettings.preloadedDate == today }
+
+
 

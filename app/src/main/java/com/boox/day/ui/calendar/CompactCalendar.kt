@@ -386,7 +386,7 @@ fun PocketDayAgenda(
                     Box(
                         modifier = Modifier
                             .size(18.dp)
-                            .border(1.5.dp, EInkTheme.Colors.primary, RoundedCornerShape(2.dp))
+                            .border(2.dp, EInkTheme.Colors.primary, RoundedCornerShape(3.dp))
                     )
                 }
                 Text(
@@ -495,7 +495,7 @@ fun PocketDueRow(task: Task, isOverdue: Boolean, onClick: () -> Unit) {
             Box(
                 modifier = Modifier
                     .size(20.dp)
-                    .border(1.5.dp, EInkTheme.Colors.primary, RoundedCornerShape(2.dp))
+                    .border(2.dp, EInkTheme.Colors.primary, RoundedCornerShape(3.dp))
             )
         }
         Text(

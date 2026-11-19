@@ -49,6 +49,8 @@ class EditorControlTower(
     /** Moves the view (Memos: two-finger drag, page map; Oct 2026). Unused on Tasks, which never moves. */
     val navigator: MemoNavigator by lazy { MemoNavigator(scope, page) }
 
+    val dayDate: String? get() = state.dayDate
+
     // PERFORMANCE FIX: Track observer job for proper lifecycle management
     // When EditorControlTower is replaced (pageId changes), cancel old observers
     private var observerJob: Job? = null
@@ -512,6 +514,30 @@ class EditorControlTower(
             }
         }
         return true
+    }
+
+    /**
+     * Copy the current lasso selection (strokes and images) to the open memo page of [targetDate].
+     */
+    fun copySelectionToDate(targetDate: String): Boolean {
+        val strokes = state.selectionState.selectedStrokes.orEmpty()
+        val images = state.selectionState.selectedImages.orEmpty()
+        if (strokes.isEmpty() && images.isEmpty()) return false
+        val displace = state.selectionState.selectionDisplaceOffset ?: androidx.compose.ui.unit.IntOffset.Zero
+        val displacedStrokes = if (displace.x != 0 || displace.y != 0) {
+            strokes.map { com.boox.day.editor.utils.offsetStroke(it, androidx.compose.ui.geometry.Offset(displace.x.toFloat(), displace.y.toFloat())) }
+        } else {
+            strokes
+        }
+        val displacedImages = if (displace.x != 0 || displace.y != 0) {
+            images.map { it.copy(x = it.x + displace.x, y = it.y + displace.y) }
+        } else {
+            images
+        }
+        applySelectionDisplace()
+        state.selectionState.reset()
+        setIsDrawing(true)
+        return state.appRepository.dayPageRepository.copySelectionToDate(targetDate, displacedStrokes, displacedImages) != null
     }
 
     private fun switchDayPage(newPageId: String) {

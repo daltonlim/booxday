@@ -46,16 +46,13 @@ import com.boox.day.editor.DrawCanvas
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import com.boox.day.ui.messages.splashTaglines
 import com.boox.day.ui.views.BugReportScreen
 import com.boox.day.ui.views.MainScreen
 import com.boox.day.ui.views.SettingsView
 import com.boox.day.ui.views.WelcomeView
 import com.boox.day.utils.TaggedLog
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -101,45 +98,22 @@ fun Router() {
 
     // Splash screen state
     var showSplash by remember { mutableStateOf(true) }
-    var showSplashBranding by remember { mutableStateOf(true) }
-    var shouldComposeNavHost by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
+    var shouldComposeNavHost by remember {
         DrawCanvas.prepareStartupSplash(
             ignoreWelcomePopupUntilCanvasReady = shouldBypassWelcomeGateForStartup
         )
-        // Let the splash paint once before composing the heavy navigation tree underneath it.
-        withFrameNanos { }
-        // Oct 2026: not before the saved settings are in (MainActivity). On defaults the main screen
-        // showed a wrong setup badge and its writers could save defaults over the user's settings
-        snapshotFlow { GlobalAppSettings.loaded }.first { it }
-        shouldComposeNavHost = true
+        mutableStateOf(GlobalAppSettings.loaded)
     }
 
-    // Select tagline ONCE at Router level (not inside AnimatedVisibility)
-    // Shuffled-deck: every quote seen once before any repeats, then reshuffle
-    val splashTagline = remember {
-        val prefs = context.getSharedPreferences("splash_prefs", android.content.Context.MODE_PRIVATE)
-        val key = "shuffled_order"
-
-        // Load remaining shuffled indices, or create a fresh shuffle
-        var remaining = prefs.getString(key, null)
-            ?.split(",")
-            ?.filter { it.isNotBlank() }
-            ?.mapNotNull { it.toIntOrNull() }
-            ?.filter { it in splashTaglines.indices }
-            ?.toMutableList()
-
-        if (remaining.isNullOrEmpty()) {
-            remaining = splashTaglines.indices.shuffled().toMutableList()
+    LaunchedEffect(Unit) {
+        if (!shouldComposeNavHost) {
+            // Let the splash paint once before composing the heavy navigation tree underneath it.
+            withFrameNanos { }
+            // Oct 2026: not before the saved settings are in (MainActivity). On defaults the main screen
+            // showed a wrong setup badge and its writers could save defaults over the user's settings
+            snapshotFlow { GlobalAppSettings.loaded }.first { it }
+            shouldComposeNavHost = true
         }
-
-        val nextIndex = remaining.removeAt(0)
-        val tagline = splashTaglines[nextIndex]
-
-        // Save remaining indices (empty string triggers reshuffle next launch)
-        prefs.edit().putString(key, remaining.joinToString(",")).apply()
-        tagline
     }
 
     // Pre-load data during splash screen with adaptive timing
@@ -197,7 +171,6 @@ fun Router() {
             // Native drawing can freeze normal UI posting on some BOOX firmware.
             // Remove the cover and let the app submit its UI before permitting raw drawing;
             // otherwise a white cover can remain visible even while the pen works (#1).
-            showSplashBranding = false
             showSplash = false
             withFrameNanos { }
             withFrameNanos { }
@@ -248,8 +221,7 @@ fun Router() {
             }
         }
 
-        // Custom splash overlay with icon and "BooxDay" text
-        // E-INK FIX: Use instant transition instead of fadeOut() to prevent ghosting artifacts
+        // Seamless splash icon cover matching Android's system splash icon until the canvas draws
         AnimatedVisibility(
             visible = showSplash,
             exit = ExitTransition.None
@@ -260,58 +232,11 @@ fun Router() {
                     .background(Color.White),
                 contentAlignment = Alignment.Center
             ) {
-                if (showSplashBranding) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier.offset(y = (-80).dp)
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.splash_icon),
-                            contentDescription = "BooxDay Logo",
-                            modifier = Modifier.size(248.dp)
-                        )
-                        Spacer(modifier = Modifier.height(28.dp))
-                        Text(
-                            text = "BooxDay",
-                            fontSize = 42.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = Color.Black,
-                            letterSpacing = 1.sp
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = splashTagline,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Normal,
-                            color = Color.DarkGray,
-                            letterSpacing = 0.5.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-
-                    // Disclaimer at bottom
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .offset(y = (-48).dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "An independent app for Boox devices",
-                            fontSize = 14.sp,
-                            color = Color.Black,
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "Made for Boox lovers, by Boox lovers",
-                            fontSize = 14.sp,
-                            color = Color.Black,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
+                Image(
+                    painter = painterResource(id = R.drawable.splash_icon),
+                    contentDescription = "BooxDay Logo",
+                    modifier = Modifier.size(192.dp)
+                )
             }
         }
     }

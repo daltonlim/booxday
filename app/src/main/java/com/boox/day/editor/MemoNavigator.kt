@@ -81,6 +81,8 @@ class MemoNavigator(private val scope: CoroutineScope, private val page: PageVie
                 val delta = pending.getAndUpdate { Offset.Zero }
                 if (delta == Offset.Zero) return@collect
                 val start = SystemClock.uptimeMillis()
+                // Refresh vertical scroll limits dynamically as the user scrolls down
+                refreshLimitsForScroll()
                 // The page follows the fingers: fingers up = view corner down the page
                 val moved = page.panBy(-axis.constrain(delta), limits)
                 val shifted = SystemClock.uptimeMillis()
@@ -211,16 +213,43 @@ class MemoNavigator(private val scope: CoroutineScope, private val page: PageVie
     private fun measure(): Boolean {
         load(page.context)
         val pageId = page.currentPageId
-        val sheetHeight = MemoViewport.sheetHeight(
+        val content = contentBounds(pageId)
+        val baseSheet = MemoViewport.sheetHeight(
             fullScreenHeight, page.viewHeight, fullScreenExtra, com.boox.day.ui.FullScreenState.isOn
         )
+        val sheetHeight = maxOf(
+            baseSheet,
+            page.viewHeight * 2,
+            (page.scroll.y + page.viewHeight * 1.5f).toInt(),
+            ((content?.bottom ?: 0f) + page.viewHeight * 0.6f).toInt()
+        )
         val area = MemoViewport.pageArea(
-            page.viewWidth, page.viewHeight, sheetHeight, contentBounds(pageId),
+            page.viewWidth, page.viewHeight, sheetHeight, content,
             margin = MARGIN_DP * page.context.resources.displayMetrics.density
         )
         limits = MemoViewport.scrollLimits(area, page.viewWidth, page.viewHeight)
         map = PageMapGeometry(area, page.viewWidth * MAP_WIDTH_SHARE, page.viewHeight * MAP_HEIGHT_SHARE)
         return MemoViewport.canMove(limits)
+    }
+
+    private fun refreshLimitsForScroll() {
+        val pageId = page.currentPageId
+        val content = contentBounds(pageId)
+        val baseSheet = MemoViewport.sheetHeight(
+            fullScreenHeight, page.viewHeight, fullScreenExtra, com.boox.day.ui.FullScreenState.isOn
+        )
+        val sheetHeight = maxOf(
+            baseSheet,
+            page.viewHeight * 2,
+            (page.scroll.y + page.viewHeight * 1.5f).toInt(),
+            ((content?.bottom ?: 0f) + page.viewHeight * 0.6f).toInt()
+        )
+        val area = MemoViewport.pageArea(
+            page.viewWidth, page.viewHeight, sheetHeight, content,
+            margin = MARGIN_DP * page.context.resources.displayMetrics.density
+        )
+        limits = MemoViewport.scrollLimits(area, page.viewWidth, page.viewHeight)
+        map = PageMapGeometry(area, page.viewWidth * MAP_WIDTH_SHARE, page.viewHeight * MAP_HEIGHT_SHARE)
     }
 
     private fun showMap(interactive: Boolean) {

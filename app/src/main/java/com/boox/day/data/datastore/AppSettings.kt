@@ -220,6 +220,9 @@ data class AppSettings(
     /** The app opens in full screen (Nov 2026, ui/FullScreenState); Back or the date line still leaves it. */
     val openInFullScreen: Boolean = false,
 
+    /** Pocket screens (Palma, Nov 2026): the calendar view last chosen, restored when the app opens. */
+    val pocketCalendarView: PocketCalendarView = PocketCalendarView.Week,
+
     // What the sleep screen shows
     val sleepScreenContent: com.boox.day.sleepscreen.SleepScreenContent = com.boox.day.sleepscreen.SleepScreenContent(),
 
@@ -287,6 +290,9 @@ data class AppSettings(
     enum class Position {
         Top, Bottom, // Left,Right,
     }
+
+    /** Pocket screens: what is above the page, cycled by the header's calendar button (Hidden is full screen). */
+    enum class PocketCalendarView { Week, Month, Hidden }
 
     /**
      * The first column of every calendar and date picker, and where "this week" starts (Oct 2026: Saturday
