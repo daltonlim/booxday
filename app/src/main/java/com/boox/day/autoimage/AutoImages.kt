@@ -270,28 +270,24 @@ object AutoImages {
         today: LocalDate,
         width: Int,
         height: Int,
-        ppi: Int
+        @Suppress("UNUSED_PARAMETER") ppi: Int
     ): Bitmap? {
         val prefs = prefs(context)
         val openedDate = prefs.getString(KEY_OPENED_TASKS_DATE, null) ?: today.toString()
         val openedIndex = prefs.getInt(KEY_OPENED_TASKS_INDEX, 0)
-        if (saved.autoImages.tasksStyle == TasksImageStyle.HANDWRITING) {
-            singleTaskPageImage(context, saved, openedDate, openedIndex, width, height)?.let { image ->
-                prefs.edit()
-                    .putString(KEY_SHOWN_TASKS_DATE, openedDate)
-                    .putInt(KEY_SHOWN_TASKS_INDEX, openedIndex)
-                    .apply()
-                return image
-            }
-            val shownDate = prefs.getString(KEY_SHOWN_TASKS_DATE, null)
-            val shownIndex = prefs.getInt(KEY_SHOWN_TASKS_INDEX, 0)
-            if (shownDate != null && (shownDate != openedDate || shownIndex != openedIndex)) {
-                singleTaskPageImage(context, saved, shownDate, shownIndex, width, height)?.let { return it }
-            }
-            taskPageImages(context, saved, today, width, height)?.firstOrNull()?.let { return it }
+        singleTaskPageImage(context, saved, openedDate, openedIndex, width, height)?.let { image ->
+            prefs.edit()
+                .putString(KEY_SHOWN_TASKS_DATE, openedDate)
+                .putInt(KEY_SHOWN_TASKS_INDEX, openedIndex)
+                .apply()
+            return image
         }
-        val targetDay = runCatching { LocalDate.parse(openedDate) }.getOrDefault(today)
-        return taskListImage(context, saved, targetDay, width, height, ppi)
+        val shownDate = prefs.getString(KEY_SHOWN_TASKS_DATE, null)
+        val shownIndex = prefs.getInt(KEY_SHOWN_TASKS_INDEX, 0)
+        if (shownDate != null && (shownDate != openedDate || shownIndex != openedIndex)) {
+            singleTaskPageImage(context, saved, shownDate, shownIndex, width, height)?.let { return it }
+        }
+        return taskPageImages(context, saved, today, width, height)?.firstOrNull()
     }
 
     private suspend fun singleTaskPageImage(
@@ -302,9 +298,12 @@ object AutoImages {
         width: Int,
         height: Int
     ): Bitmap? {
-        val canvasHeight = saved.tasksInkCanvasHeight
-        val topOffset = saved.tasksInkTopOffset
-        if (canvasHeight <= topOffset + MIN_TASKS_GEOMETRY_PX) return null
+        val topOffset = saved.tasksInkTopOffset.takeIf { it > 0f }
+            ?: com.boox.day.data.datastore.GlobalAppSettings.tasksTopOffsetPx.takeIf { it > 0f }
+            ?: (AppDensity.dpi / 160f)
+        val canvasHeight = saved.tasksInkCanvasHeight.takeIf { it > topOffset + MIN_TASKS_GEOMETRY_PX }
+            ?: com.boox.day.data.datastore.GlobalAppSettings.tasksCanvasHeight.takeIf { it > topOffset + MIN_TASKS_GEOMETRY_PX }
+            ?: (height * 0.68f)
         val database = AppDatabase.getDatabase(context)
         val dao = database.taskDao()
         val handwriting = HandwrittenRows(context, database.openHelper.readableDatabase)

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Divider
 import androidx.compose.material.Icon
@@ -142,7 +143,10 @@ class TaskCardActions(
     val totalRows: Int = 10,
     val onMoveUp: (() -> Unit)? = null,
     val onMoveDown: (() -> Unit)? = null,
-    val onMoveToRow: ((Int) -> Unit)? = null
+    val onMoveToRow: ((Int) -> Unit)? = null,
+    val onAddTypedSubtask: ((String) -> Unit)? = null,
+    val onAddHandwrittenSubtask: (() -> Unit)? = null,
+    val onToggleSubtaskParent: (() -> Unit)? = null
 )
 
 @Composable
@@ -273,18 +277,87 @@ fun TaskCardContent(
             TaskCardScreen.List -> data.list?.let { ListScreen(it, subtitle, go, actions) }
             TaskCardScreen.Order -> OrderScreen(task, subtitle, go, actions)
             TaskCardScreen.Subtasks -> {
+                var newSubtaskText by remember { mutableStateOf("") }
                 Header(screen.title, subtitle)
                 Body {
+                    if (actions.onAddTypedSubtask != null) {
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Box(
+                                Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 44.dp)
+                                    .border(1.5.dp, EInkTheme.Colors.primary, RoundedCornerShape(EInkTheme.Global.cornerRadius))
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                if (newSubtaskText.isEmpty()) {
+                                    Text(
+                                        "Type a new subtask…",
+                                        fontSize = EInkTheme.Typography.bodyLarge,
+                                        color = EInkTheme.Colors.gray
+                                    )
+                                }
+                                BasicTextField(
+                                    value = newSubtaskText,
+                                    onValueChange = { newSubtaskText = it.take(EInkTheme.TasksTab.typedTextMaxLength) },
+                                    singleLine = true,
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        fontSize = EInkTheme.Typography.bodyLarge,
+                                        color = EInkTheme.Colors.primary
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            val canAdd = newSubtaskText.isNotBlank()
+                            Box(
+                                Modifier
+                                    .height(44.dp)
+                                    .background(
+                                        if (canAdd) EInkTheme.Colors.primary else EInkTheme.Colors.lightGray,
+                                        RoundedCornerShape(EInkTheme.Global.cornerRadius)
+                                    )
+                                    .border(1.5.dp, EInkTheme.Colors.primary, RoundedCornerShape(EInkTheme.Global.cornerRadius))
+                                    .noRippleClickable(enabled = canAdd) {
+                                        val toAdd = newSubtaskText.trim()
+                                        if (toAdd.isNotEmpty()) {
+                                            newSubtaskText = ""
+                                            actions.onAddTypedSubtask.invoke(toAdd)
+                                        }
+                                    }
+                                    .padding(horizontal = 16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "Add",
+                                    fontSize = EInkTheme.Typography.bodyLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (canAdd) EInkTheme.Colors.white else EInkTheme.Colors.darkGray
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Thin()
+                    }
                     if (data.subtasks.isNotEmpty()) {
                         data.subtasks.forEach { SubtaskLine(it) }
-                        Note("They are the rows under this task on the Tasks page. Tick them there.")
+                        Note("Subtasks appear indented directly under this task on the Tasks page.")
                     } else {
-                        Note("No subtasks yet. Break Down asks AI to split this task into small steps and adds them under it.")
+                        Note("No subtasks yet. Type one above, tap Add Row to handwrite one below this task, or use Break Down to split with AI.")
                     }
                 }
                 val breakDown = actions.onBreakDown
-                if (breakDown != null) Footer2({ go(TaskCardScreen.Main) }, "Back", breakDown, "Break Down")
-                else Footer1({ go(TaskCardScreen.Main) }, "Back")
+                val addRow = actions.onAddHandwrittenSubtask
+                when {
+                    addRow != null && breakDown != null -> Footer3({ go(TaskCardScreen.Main) }, "Back", addRow, "Add Row", breakDown, "Break Down")
+                    addRow != null -> Footer2({ go(TaskCardScreen.Main) }, "Back", addRow, "Add Blank Row")
+                    breakDown != null -> Footer2({ go(TaskCardScreen.Main) }, "Back", breakDown, "Break Down")
+                    else -> Footer1({ go(TaskCardScreen.Main) }, "Back")
+                }
             }
         }
     }
@@ -306,7 +379,6 @@ private fun MainList(
     ValueLine("Text", if (titleText != null) "Typed" else "Handwritten") {
         if (titleText != null) actions.onEditText() else go(TaskCardScreen.Text)
     }
-    PriorityLine(task.priority, actions.onPriorityChange)
     if (actions.onMoveUp != null || actions.onMoveDown != null || actions.onMoveToRow != null) {
         OrderLine(
             rowIndex = task.rowIndex,
@@ -331,10 +403,18 @@ private fun MainList(
     }
     val taskDay = TaskDueDates.toLocalDate(task.dayDate) ?: today
     ValueLine("Repeat", data.template?.let { taskRepeatLabel(it, taskDay) } ?: "Off") { go(TaskCardScreen.Repeat) }
-    if (data.subtasks.isNotEmpty() || actions.onBreakDown != null) {
+    if (task.parentTaskId == null) {
         val done = data.subtasks.count { it.done }
-        ValueLine("Subtasks", if (data.subtasks.isEmpty()) "None" else "${data.subtasks.size}, $done done") {
+        ValueLine("Subtasks", if (data.subtasks.isEmpty()) "Add subtask…" else "${data.subtasks.size}, $done done") {
             go(TaskCardScreen.Subtasks)
+        }
+    }
+    if (actions.onToggleSubtaskParent != null) {
+        ValueLine(
+            "Hierarchy",
+            if (task.parentTaskId != null) "Subtask · Make main task" else "Main task · Make subtask of above"
+        ) {
+            actions.onToggleSubtaskParent.invoke()
         }
     }
     data.list?.let { list ->

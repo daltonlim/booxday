@@ -5708,6 +5708,90 @@ class TaskRepository(internal val context: Context) {
     }
 
     /**
+     * Insert a subtask directly underneath [parentTaskId] (and its existing subtasks on the page),
+     * shifting lower rows down when needed. If [typedText] is provided, sets it on the new subtask.
+     */
+    fun addSubtaskUnderParent(
+        parentTaskId: String,
+        typedText: String?,
+        canvasHeight: Float
+    ): Task? {
+        val parent = taskDao.getById(parentTaskId) ?: return null
+        val rootParentId = parent.parentTaskId ?: parent.id
+        val pageTasks = taskDao.getTasksForPage(parent.dayDate, parent.taskPageIndex).sortedBy { it.rowIndex }
+        if (pageTasks.isEmpty()) return null
+
+        val existingChildren = pageTasks.filter { it.parentTaskId == rootParentId }
+        val lastGroupRow = existingChildren.maxOfOrNull { it.rowIndex } ?: parent.rowIndex
+        val insertIdx = (lastGroupRow + 1).coerceAtMost(pageTasks.lastIndex)
+
+        var targetSlotId: String? = null
+        var targetPageIndex = parent.taskPageIndex
+
+        if (lastGroupRow < pageTasks.lastIndex) {
+            val slotAtInsert = pageTasks[insertIdx]
+            if (!taskHasRealContent(slotAtInsert, canvasHeight)) {
+                targetSlotId = slotAtInsert.id
+            } else {
+                val emptyBelowIdx = (insertIdx..pageTasks.lastIndex).firstOrNull { idx ->
+                    !taskHasRealContent(pageTasks[idx], canvasHeight)
+                }
+                if (emptyBelowIdx != null) {
+                    val emptyTask = pageTasks[emptyBelowIdx]
+                    val newOrder = pageTasks.toMutableList().apply {
+                        removeAt(emptyBelowIdx)
+                        add(insertIdx, emptyTask)
+                    }
+                    val items = pageTasks.indices
+                        .filter { i -> newOrder[i].id != pageTasks[i].id }
+                        .map { i ->
+                            TaskReorderItem(
+                                sourceTask = newOrder[i],
+                                targetPageIndex = parent.taskPageIndex,
+                                targetRowIndex = pageTasks[i].rowIndex,
+                                targetTaskId = pageTasks[i].id
+                            )
+                        }
+                    if (reorderTasksWithStrokes(parent.dayDate, items, canvasHeight)) {
+                        targetSlotId = pageTasks[insertIdx].id
+                    }
+                }
+            }
+        }
+
+        if (targetSlotId == null) {
+            val nextPageIndex = parent.taskPageIndex + 1
+            val (nextPageTasks, _) = getOrCreateTasksForPage(parent.dayDate, nextPageIndex)
+            val emptyOnNext = nextPageTasks.sortedBy { it.rowIndex }.firstOrNull { !taskHasRealContent(it, canvasHeight) }
+                ?: nextPageTasks.firstOrNull()
+            targetSlotId = emptyOnNext?.id
+            targetPageIndex = nextPageIndex
+        }
+
+        val slotId = targetSlotId ?: return null
+        taskDao.setParentTask(slotId, rootParentId)
+        val cleanText = typedText?.trim()?.takeIf { it.isNotEmpty() }
+        if (cleanText != null) {
+            setTypedText(slotId, cleanText)
+        } else {
+            invalidateTaskCache(parent.dayDate)
+            _taskChanged.tryEmit(parent.dayDate)
+        }
+        return taskDao.getById(slotId)?.copy(taskPageIndex = targetPageIndex)
+    }
+
+    /**
+     * Link or unlink [taskId] as a subtask of [parentTaskId] (null promotes it to a standalone task).
+     */
+    fun setSubtaskParent(taskId: String, parentTaskId: String?): Task? {
+        val task = taskDao.getById(taskId) ?: return null
+        taskDao.setParentTask(taskId, parentTaskId)
+        invalidateTaskCache(task.dayDate)
+        _taskChanged.tryEmit(task.dayDate)
+        return taskDao.getById(taskId)
+    }
+
+    /**
      * Get tasks with content for export.
      * Returns tasks that have metadata OR intentional strokes.
      *

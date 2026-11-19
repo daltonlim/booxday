@@ -79,6 +79,7 @@ private val log = TaggedLog("GestureReceiver")
 fun EditorGestureReceiver(
     controlTower: EditorControlTower,
     editorState: EditorState? = null,
+    onTaskPageNav: ((Int) -> Unit)? = null
 ) {
 
     val coroutineScope = rememberCoroutineScope()
@@ -371,6 +372,10 @@ fun EditorGestureReceiver(
                             }
 
                             GestureMode.Scroll -> {
+                                val vDrag = gestureState.getVerticalDrag()
+                                if (!DrawCanvas.memoModeChanged.value && onTaskPageNav != null && abs(vDrag) > 80f) {
+                                    onTaskPageNav(if (vDrag < 0f) 1 else -1)
+                                }
                                 gestureState.gestureMode =
                                     GestureMode.Normal // return screen updates to normal.
                                 return@awaitEachGesture
@@ -516,7 +521,8 @@ fun EditorGestureReceiver(
                                     default = if (gestureState.getInputCount() == 1) AppSettings.defaultSwipeLeftAction else AppSettings.defaultTwoFingerSwipeLeftAction,
                                     override = if (gestureState.getInputCount() == 1) AppSettings::swipeLeftAction else AppSettings::twoFingerSwipeLeftAction,
                                     scope = coroutineScope,
-                                    controlTower = controlTower
+                                    controlTower = controlTower,
+                                    onTaskPageNav = onTaskPageNav
                                 )
                             else if (horizontalDrag > SWIPE_THRESHOLD)
                                 resolveGesture(
@@ -524,8 +530,12 @@ fun EditorGestureReceiver(
                                     default = if (gestureState.getInputCount() == 1) AppSettings.defaultSwipeRightAction else AppSettings.defaultTwoFingerSwipeRightAction,
                                     override = if (gestureState.getInputCount() == 1) AppSettings::swipeRightAction else AppSettings::twoFingerSwipeRightAction,
                                     scope = coroutineScope,
-                                    controlTower = controlTower
+                                    controlTower = controlTower,
+                                    onTaskPageNav = onTaskPageNav
                                 )
+                            else if (!DrawCanvas.memoModeChanged.value && onTaskPageNav != null && abs(verticalDrag) > 100f) {
+                                onTaskPageNav(if (verticalDrag < 0f) 1 else -1)
+                            }
                         }
                         if (!GlobalAppSettings.current.smoothScroll && gestureState.isOneFinger()
                             && abs(verticalDrag) > SWIPE_THRESHOLD
@@ -645,8 +655,10 @@ private fun resolveGesture(
     scope: CoroutineScope,
     rectangle: Rect = Rect(),
     controlTower: EditorControlTower,
-    context: Context? = null  // For paste action
+    context: Context? = null,  // For paste action
+    onTaskPageNav: ((Int) -> Unit)? = null
 ) {
+    val isTasks = !DrawCanvas.memoModeChanged.value && onTaskPageNav != null
     when (if (settings != null) override(settings) else default) {
         null -> log.i("No Action (null)")
         // ⚠️ NO-TOUCH ZONE: PALM REJECTION FIX (Dec 2025) - Gestures disabled to prevent palm triggers
@@ -655,9 +667,9 @@ private fun resolveGesture(
         // ⚠️ DAY PAGE NAVIGATION FIX (Dec 2025): Use day page methods for calendar mode
         // goToNextPage/goToPreviousPage require bookId (notebook mode) which is null in Memos/Tasks.
         // goToNextDayPage creates new page if on last; goToPreviousDayPage does nothing if on first.
-        AppSettings.GestureAction.PreviousPage -> controlTower.goToPreviousDayPage()
+        AppSettings.GestureAction.PreviousPage -> if (isTasks) onTaskPageNav!!(-1) else controlTower.goToPreviousDayPage()
 
-        AppSettings.GestureAction.NextPage -> controlTower.goToNextDayPage()
+        AppSettings.GestureAction.NextPage -> if (isTasks) onTaskPageNav!!(1) else controlTower.goToNextDayPage()
 
         AppSettings.GestureAction.ChangeTool -> controlTower.toggleTool()
 

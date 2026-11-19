@@ -6732,7 +6732,11 @@ private fun PersistentCanvasHost(
                     history = activeHistory,
                     isMemosCanvas = isMemosCanvas
                 )
-                EditorGestureReceiver(controlTower = activeControlTower, editorState = activeState)
+                EditorGestureReceiver(
+                    controlTower = activeControlTower,
+                    editorState = activeState,
+                    onTaskPageNav = if (currentTab == EditorTab.Tasks) onTaskPageNav else null
+                )
                 SelectedBitmap(
                     context = context,
                     controlTower = activeControlTower,
@@ -7333,6 +7337,75 @@ private fun PersistentCanvasHost(
                                     }
                                 }
                             }
+                        },
+                        onAddTypedSubtask = if (cardTask.parentTaskId == null) {
+                            { subtaskText ->
+                                com.boox.day.ui.FullScreenState.exitThen {
+                                    scope.launch(Dispatchers.IO) {
+                                        val added = appRepository.taskRepository.addSubtaskUnderParent(
+                                            cardTask.id, subtaskText, tasksNormalHeight
+                                        )
+                                        if (added != null) {
+                                            withContext(Dispatchers.Main) {
+                                                onTasksNeedRefresh?.invoke(added.taskPageIndex.takeIf { it != cardTask.taskPageIndex })
+                                                refreshTaskCard(cardTask)
+                                                TasksCanvasRefresh.request()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else null,
+                        onAddHandwrittenSubtask = if (cardTask.parentTaskId == null) {
+                            {
+                                taskCard = null
+                                com.boox.day.ui.FullScreenState.exitThen {
+                                    scope.launch(Dispatchers.IO) {
+                                        val added = appRepository.taskRepository.addSubtaskUnderParent(
+                                            cardTask.id, null, tasksNormalHeight
+                                        )
+                                        if (added != null) {
+                                            withContext(Dispatchers.Main) {
+                                                onTasksNeedRefresh?.invoke(added.taskPageIndex.takeIf { it != cardTask.taskPageIndex })
+                                                TasksCanvasRefresh.request()
+                                                snackManager.displaySnack(
+                                                    SnackConf(
+                                                        text = "Subtask row added on Row ${added.rowIndex + 1}",
+                                                        duration = SnackConf.DURATION_QUICK
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else null,
+                        onToggleSubtaskParent = run {
+                            val aboveParentId = if (cardTask.parentTaskId != null) {
+                                null
+                            } else {
+                                tasks.sortedBy { it.rowIndex }
+                                    .lastOrNull {
+                                        it.rowIndex < cardTask.rowIndex &&
+                                            it.parentTaskId == null &&
+                                            (taskContentMap[it.id] == true || !it.typedText.isNullOrBlank() || !it.recognizedText.isNullOrBlank() || it.isCompleted)
+                                    }
+                                    ?.id
+                            }
+                            if (cardTask.parentTaskId != null || aboveParentId != null) {
+                                {
+                                    scope.launch(Dispatchers.IO) {
+                                        val updated = appRepository.taskRepository.setSubtaskParent(cardTask.id, aboveParentId)
+                                        if (updated != null) {
+                                            withContext(Dispatchers.Main) {
+                                                onTasksNeedRefresh?.invoke(null)
+                                                refreshTaskCard(updated)
+                                                TasksCanvasRefresh.request()
+                                            }
+                                        }
+                                    }
+                                }
+                            } else null
                         }
                     )
                 )

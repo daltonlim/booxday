@@ -25,6 +25,8 @@ import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -143,7 +145,7 @@ fun TasksControlColumn(
                 // Use extracted, stable composable to skip recomposition
                 TaskControlRow(
                     isCompleted = task.isCompleted,
-                    priority = task.priority,
+                    isSubtask = task.parentTaskId != null,
                     dueDay = task.dueDay,
                     hasContent = hasContent,
                     rowIndex = index,
@@ -151,7 +153,12 @@ fun TasksControlColumn(
                     isDragTarget = dragTargetRow == index,
                     onCheckboxToggle = { onCheckboxToggle(task) },
                     onCheckboxLongPress = onCheckboxLongPress,
-                    onPriorityChange = { newPriority -> onPriorityChange(task, newPriority) },
+                    onMoveUp = if (onReorderRow != null && hasContent && index > 0) {
+                        { onReorderRow(task, index - 1) }
+                    } else null,
+                    onMoveDown = if (onReorderRow != null && hasContent && index < tasks.lastIndex) {
+                        { onReorderRow(task, index + 1) }
+                    } else null,
                     onDueDateTap = { onDueDateTap(task) },
                     onChevronTap = { onChevronTap(task) },
                     onChevronLongPress = { onChevronLongPress(task) },
@@ -184,7 +191,7 @@ fun TasksControlColumn(
 @Composable
 private fun TaskControlRow(
     isCompleted: Boolean,
-    priority: String,
+    isSubtask: Boolean = false,
     dueDay: String?,
     hasContent: Boolean,
     rowIndex: Int,
@@ -192,7 +199,8 @@ private fun TaskControlRow(
     isDragTarget: Boolean = false,
     onCheckboxToggle: () -> Unit,
     onCheckboxLongPress: () -> Unit,
-    onPriorityChange: (String) -> Unit,
+    onMoveUp: (() -> Unit)?,
+    onMoveDown: (() -> Unit)?,
     onDueDateTap: () -> Unit,
     onChevronTap: () -> Unit,
     onChevronLongPress: () -> Unit,
@@ -200,8 +208,6 @@ private fun TaskControlRow(
     onChevronVerticalDrag: ((totalDy: Float, finished: Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    var showPriorityMenu by remember { mutableStateOf(false) }
-
     Column(
         modifier = modifier.then(
             if (isDragTarget) Modifier.border(2.dp, EInkTheme.Colors.primary) else Modifier
@@ -223,9 +229,22 @@ private fun TaskControlRow(
                         }
                     }
                 )
+                .then(
+                    if (isSubtask) {
+                        Modifier.drawBehind {
+                            val lineX = 3.dp.toPx()
+                            drawLine(
+                                color = EInkTheme.TasksTab.Subtask.textColor,
+                                start = Offset(lineX, 0f),
+                                end = Offset(lineX, size.height),
+                                strokeWidth = 2.5.dp.toPx()
+                            )
+                        }
+                    } else Modifier
+                )
                 .padding(
-                    start = EInkTheme.TasksTab.compactPaddingStart,
-                    end = EInkTheme.TasksTab.compactPaddingEnd
+                    start = if (isSubtask) 6.dp else 2.dp,
+                    end = 0.dp
                 ),
             verticalAlignment = Alignment.CenterVertically,
             // Use manual spacers for custom gaps
@@ -237,33 +256,37 @@ private fun TaskControlRow(
                 checked = isCompleted,
                 onCheckedChange = { onCheckboxToggle() },
                 onLongPress = { onCheckboxLongPress() },
-                touchSize = EInkTheme.TasksTab.checkboxTouchCompact,
+                touchSize = 34.dp,
                 iconSize = EInkTheme.TasksTab.checkboxIconCompact
             )
 
-            // Spacer after checkbox
-            Spacer(modifier = Modifier.width(EInkTheme.TasksTab.compactGapAfterCheckbox))
+            Spacer(modifier = Modifier.width(2.dp))
 
-            // Priority button with E-Ink optimized popup
-            // Compact screens (plan Phase 1.5): no due-date button in the column — the priority
-            // menu carries a calendar icon that opens the due-date dialog, and a mark on the
-            // priority button shows that a due date is set (until the task card in Phase T3).
             val isCompactProfile = LayoutProfiles.isNarrowScreen
-            EInkPriorityButton(
-                priority = priority,
-                isCompleted = isCompleted,
-                showMenu = showPriorityMenu,
-                onShowMenuChange = { showPriorityMenu = it },
-                onPriorityChange = onPriorityChange,
-                touchSize = EInkTheme.TasksTab.priorityTouchCompact,
-                iconSize = EInkTheme.TasksTab.priorityIconCompact,
-                dueDay = if (isCompactProfile) dueDay else null,
-                onDueDateTap = if (isCompactProfile) onDueDateTap else null
+            val currentOnMoveUp by rememberUpdatedState(onMoveUp)
+            val currentOnMoveDown by rememberUpdatedState(onMoveDown)
+            val canUp = hasContent && rowIndex > 0 && currentOnMoveUp != null
+            val canDown = hasContent && rowIndex < totalRows - 1 && currentOnMoveDown != null
+
+            EInkReorderIconButton(
+                icon = Icons.Default.KeyboardArrowUp,
+                contentDescription = "Move task up",
+                enabled = canUp,
+                onClick = { currentOnMoveUp?.invoke() }
+            )
+
+            Spacer(modifier = Modifier.width(2.dp))
+
+            EInkReorderIconButton(
+                icon = Icons.Default.KeyboardArrowDown,
+                contentDescription = "Move task down",
+                enabled = canDown,
+                onClick = { currentOnMoveDown?.invoke() }
             )
 
             if (!isCompactProfile) {
-                // Due Date button (always shown)
-                Spacer(modifier = Modifier.width(EInkTheme.TasksTab.compactGapAfterPriority))
+                // Due Date button (always shown on regular tablets)
+                Spacer(modifier = Modifier.width(2.dp))
 
                 EInkDueDateButton(
                     dueDay = dueDay,
@@ -272,22 +295,15 @@ private fun TaskControlRow(
                 )
             }
 
-            // Fixed gap before chevron
-            Spacer(modifier = Modifier.width(EInkTheme.TasksTab.compactGap))
+            Spacer(modifier = Modifier.width(2.dp))
 
             // Chevron button (right) - E-Ink optimized (no ripple)
-            // Tap: opens type dialog if empty, task card if has content
-            // Long-press: opens edit dialog directly (skips move popup)
-            // The gesture block never restarts, so it must call the latest callbacks — otherwise
-            // a row typed into after the first composition still hands over its old (empty) task
-            // and the tap opens an empty type dialog. A ticked task opens its card too (owner,
-            // 31 Oct 2026; ticked tasks were locked since the first release)
             val currentOnChevronTap by rememberUpdatedState(onChevronTap)
             val currentOnChevronLongPress by rememberUpdatedState(onChevronLongPress)
             val currentOnChevronVerticalDrag by rememberUpdatedState(onChevronVerticalDrag)
             Box(
                 modifier = Modifier
-                    .size(EInkTheme.TasksTab.chevronTouchCompact)
+                    .size(30.dp)
                     .pointerInput(Unit) {
                         val dragSlop = viewConfiguration.touchSlop
                         val longPressMs = viewConfiguration.longPressTimeoutMillis
@@ -331,8 +347,20 @@ private fun TaskControlRow(
                     imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                     contentDescription = if (hasContent) "Move task" else "Type task",
                     tint = EInkTheme.Colors.primary,
-                    modifier = Modifier.size(EInkTheme.TasksTab.chevronIconCompact)
+                    modifier = Modifier.size(26.dp)
                 )
+                if (isCompactProfile && dueDay != null) {
+                    val isOverdue = TaskDueDates.isOverdue(dueDay, isCompleted)
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(6.dp)
+                            .background(
+                                if (isOverdue) EInkTheme.Colors.red else EInkTheme.Colors.primary,
+                                CircleShape
+                            )
+                    )
+                }
             }
         }
 
@@ -434,6 +462,49 @@ private fun EInkCheckbox(
                     modifier = Modifier.size((iconSize.value * 0.7f).dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun EInkReorderIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .width(22.dp)
+            .height(34.dp)
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(21.dp)
+                .background(
+                    color = EInkTheme.Colors.white,
+                    shape = RoundedCornerShape(4.dp)
+                )
+                .border(
+                    width = 1.5.dp,
+                    color = if (enabled) EInkTheme.Colors.primary else EInkTheme.Colors.lightGray,
+                    shape = RoundedCornerShape(4.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = if (enabled) EInkTheme.Colors.primary else EInkTheme.Colors.lightGray,
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }

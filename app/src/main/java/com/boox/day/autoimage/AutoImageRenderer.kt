@@ -14,6 +14,7 @@ import android.text.TextPaint
 import android.text.TextUtils
 import androidx.compose.ui.geometry.Offset
 import com.boox.day.ai.MemoPageContent
+import com.boox.day.editor.drawing.drawStroke
 import com.boox.day.io.MemoPageRenderer
 import kotlin.math.ceil
 import kotlin.math.max
@@ -70,8 +71,8 @@ object AutoImageRenderer {
     }
 
     /**
-     * A Tasks page: the control column ([columnPx] wide) with each row's checkbox and priority, then the
-     * page's ink at its canvas position, on [rowCount] rows filling [rowsHeight] below [topOffset].
+     * A Tasks page rendered cleanly as `[ ] Task` for incomplete tasks and `[✓] Task` (crossed through)
+     * for completed tasks, fitted within [widthPx].
      */
     fun tasksPage(
         context: Context,
@@ -89,23 +90,48 @@ object AutoImageRenderer {
             val canvas = Canvas(bitmap)
             canvas.drawColor(Color.WHITE)
             val rowHeight = (rowsHeight - topOffset) / rowCount
-            val linePaint = Paint().apply { color = Color.DKGRAY; strokeWidth = 2.5f }
-            for (i in 1..rowCount) {
-                val y = topOffset + i * rowHeight
-                canvas.drawLine(0f, y, widthPx.toFloat(), y, linePaint)
-            }
-            canvas.drawLine(columnPx, topOffset, columnPx, rowsHeight, linePaint)
-
-            canvas.save()
-            canvas.clipRect(columnPx, 0f, widthPx.toFloat(), rowsHeight)
-            canvas.translate(columnPx, 0f)
-            MemoPageRenderer.drawMemoPage(context, canvas, content, Offset.Zero)
-            canvas.restore()
+            val rightMargin = rowHeight * 0.30f
 
             rows.filter { it.hasContent && it.rowIndex in 0 until rowCount }.forEach { row ->
                 val rowTop = topOffset + row.rowIndex * rowHeight
-                drawControls(canvas, row, rowTop, rowHeight, columnPx)
-                row.text?.let { drawTypedText(canvas, it, row, rowTop, rowHeight, columnPx, widthPx.toFloat()) }
+                val rowBottom = rowTop + rowHeight
+                val cy = rowTop + rowHeight / 2f
+                val taskLeft = drawCheckbox(canvas, row, rowTop, rowHeight)
+
+                val rowStrokes = content.strokes.filter { stroke ->
+                    val midY = (stroke.top + stroke.bottom) / 2f
+                    midY in rowTop..rowBottom
+                }
+                if (rowStrokes.isNotEmpty()) {
+                    val minLeft = rowStrokes.minOf { it.left }
+                    val maxRight = rowStrokes.maxOf { it.right }
+                    val strokeSpan = (maxRight - minLeft).coerceAtLeast(1f)
+                    val availableWidth = (widthPx - rightMargin - taskLeft).coerceAtLeast(1f)
+                    val scaleX = min(1f, availableWidth / strokeSpan)
+
+                    canvas.save()
+                    canvas.clipRect(taskLeft, rowTop, widthPx - rightMargin, rowBottom)
+                    canvas.translate(taskLeft, cy)
+                    canvas.scale(scaleX, scaleX)
+                    canvas.translate(-minLeft, -cy)
+                    rowStrokes.forEach { stroke ->
+                        drawStroke(canvas, stroke, Offset.Zero)
+                    }
+                    canvas.restore()
+
+                    if (row.completed) {
+                        val strikeRight = (taskLeft + strokeSpan * scaleX).coerceAtMost(widthPx - rightMargin)
+                        val strikePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = Color.BLACK
+                            style = Paint.Style.STROKE
+                            strokeWidth = max(3f, rowHeight * 0.045f)
+                            strokeCap = Paint.Cap.ROUND
+                        }
+                        canvas.drawLine(taskLeft, cy, strikeRight, cy, strikePaint)
+                    }
+                } else {
+                    row.text?.let { drawTypedText(canvas, it, row, rowTop, rowHeight, taskLeft, widthPx - rightMargin) }
+                }
             }
         } catch (e: Throwable) {
             bitmap.recycle()
@@ -160,11 +186,12 @@ object AutoImageRenderer {
         return target
     }
 
-    private fun drawControls(canvas: Canvas, row: TaskRow, rowTop: Float, rowHeight: Float, columnPx: Float) {
-        val box = min(rowHeight * 0.42f, columnPx * 0.3f)
-        val cx = columnPx * (if (row.isSubtask) 0.38f else 0.3f)
+    /** Draws `[ ]` or `[✓]` and returns the X coordinate where the task text/ink starts. */
+    private fun drawCheckbox(canvas: Canvas, row: TaskRow, rowTop: Float, rowHeight: Float): Float {
+        val box = rowHeight * 0.42f
+        val left = rowHeight * (if (row.isSubtask) 0.85f else 0.45f)
         val cy = rowTop + rowHeight / 2f
-        val rect = RectF(cx - box / 2f, cy - box / 2f, cx + box / 2f, cy + box / 2f)
+        val rect = RectF(left, cy - box / 2f, left + box, cy + box / 2f)
         val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
             style = Paint.Style.STROKE
@@ -177,30 +204,32 @@ object AutoImageRenderer {
                 lineTo(rect.left + box * 0.42f, rect.top + box * 0.74f)
                 lineTo(rect.left + box * 0.8f, rect.top + box * 0.28f)
             }
-            canvas.drawPath(tick, Paint(boxPaint).apply { strokeWidth = max(3f, box / 7f); strokeCap = Paint.Cap.ROUND })
+            canvas.drawPath(tick, Paint(boxPaint).apply { strokeWidth = max(3.5f, box / 6.5f); strokeCap = Paint.Cap.ROUND })
         }
-        if (row.priority.isNotEmpty()) {
-            val priorityPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.BLACK
-                textSize = rowHeight * 0.34f
-                typeface = Typeface.DEFAULT_BOLD
-                textAlign = Paint.Align.CENTER
-            }
-            canvas.drawText(row.priority, columnPx * 0.72f, cy + priorityPaint.textSize / 3f, priorityPaint)
-        }
+        return rect.right + rowHeight * 0.30f
     }
 
     private fun drawTypedText(
-        canvas: Canvas, text: String, row: TaskRow, rowTop: Float, rowHeight: Float, columnPx: Float, right: Float
+        canvas: Canvas, text: String, row: TaskRow, rowTop: Float, rowHeight: Float, left: Float, right: Float
     ) {
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = if (row.completed) Color.GRAY else Color.BLACK
-            textSize = rowHeight * (if (row.isSubtask) 0.32f else 0.38f)
+            color = Color.BLACK
+            textSize = rowHeight * (if (row.isSubtask) 0.34f else 0.40f)
             isStrikeThruText = row.completed
         }
-        val left = columnPx + rowHeight * (if (row.isSubtask) 0.6f else 0.25f)
         val line = text.lineSequence().first().trim()
-        val shown = TextUtils.ellipsize(line, paint, right - left - rowHeight * 0.25f, TextUtils.TruncateAt.END)
-        canvas.drawText(shown, 0, shown.length, left, rowTop + rowHeight / 2f + paint.textSize / 3f, paint)
+        val shown = TextUtils.ellipsize(line, paint, (right - left).coerceAtLeast(1f), TextUtils.TruncateAt.END)
+        val baseline = rowTop + rowHeight / 2f + paint.textSize / 3f
+        canvas.drawText(shown, 0, shown.length, left, baseline, paint)
+        if (row.completed && shown.isNotEmpty()) {
+            val textWidth = paint.measureText(shown, 0, shown.length)
+            val strikeY = rowTop + rowHeight / 2f
+            val strikePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.BLACK
+                style = Paint.Style.STROKE
+                strokeWidth = max(2.5f, rowHeight * 0.04f)
+            }
+            canvas.drawLine(left, strikeY, (left + textWidth).coerceAtMost(right), strikeY, strikePaint)
+        }
     }
 }
