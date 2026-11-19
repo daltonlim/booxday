@@ -96,11 +96,7 @@ fun TaskTypedTextOverlay(
             val isParentTask = task?.id in parentTaskIds
             val recurringState = task?.let { recurringStateForTask(it) }
 
-            // Add ▼ indicator for parent tasks to show they have subtasks
-            val parentDisplayText = when {
-                isParentTask && hasTypedText -> "▼ $displayText"
-                else -> displayText
-            }
+            val parentDisplayText = displayText
 
             TaskTypedTextRow(
                 rowHeight = rowHeightDp,
@@ -129,29 +125,12 @@ private fun TaskTypedTextRow(
     isChildTask: Boolean,
     isParentTask: Boolean,
     recurringState: Boolean?,
-    connectorColor: Color
+    @Suppress("UNUSED_PARAMETER") connectorColor: Color
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(rowHeight)
-            // Completed tasks: NO overlay (E-Ink rule: no alpha on containers)
-            // Visual distinction provided by grayed text/strokes via completedTextColor, completedStrokeColor
-            // Draw connector line for child tasks (visual grouping)
-            .then(
-                if (isChildTask && !isCompleted) {
-                    Modifier.drawBehind {
-                        // Draw vertical connector line on left edge
-                        val lineX = 24.dp.toPx()  // Position after the padding
-                        drawLine(
-                            color = connectorColor,
-                            start = Offset(lineX, 0f),
-                            end = Offset(lineX, size.height),
-                            strokeWidth = 2.dp.toPx()
-                        )
-                    }
-                } else Modifier
-            ),
+            .height(rowHeight),
         contentAlignment = Alignment.CenterStart
     ) {
         if (hasTypedText || recurringState != null) {

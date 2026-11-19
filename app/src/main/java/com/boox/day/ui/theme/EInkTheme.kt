@@ -589,13 +589,9 @@ object EInkTheme {
         val priorityIconSize = 20.dp
         val expandButtonSize = 24.dp
 
-        // Due dates feature - compact layout
-        // Layout: 4dp + 39dp + 3dp + 28dp + 5dp + 32dp + 3dp + 39dp = 152dp
-        val controlColumnWidthWithDueDates = 152.dp
-
-        // Compact screen profile (plan Phase 1.5, Go 6): checkbox + priority + chevron, due date via
-        // the priority menu. Layout: 4dp + 39dp + 3dp + 28dp + 3dp + 39dp = 116dp. Fixed per device.
-        val controlColumnWidthCompactProfile = 116.dp
+        // Google Keep style control column: 6-dot drag handle + checkbox (+ 24.dp subtask indent)
+        val controlColumnWidthWithDueDates = 92.dp
+        val controlColumnWidthCompactProfile = 92.dp
 
         // Touch targets (tap area)
         val checkboxTouchCompact = 39.dp                  // Checkbox tap area

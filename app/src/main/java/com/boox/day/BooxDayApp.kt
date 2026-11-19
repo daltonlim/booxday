@@ -129,7 +129,7 @@ class BooxDayApp : Application() {
                 if (memosPageId != null && tasksPageId != null) {
                     pageRepo.getByIds(listOf(memosPageId, tasksPageId))
                     GlobalAppSettings.setPreloadedPageIds(today, memosPageId, tasksPageId)
-                    val activePageId = if (GlobalAppSettings.current.startTab == AppSettings.StartTab.Tasks) {
+                    val activePageId = if (GlobalAppSettings.current.lastActiveTab == AppSettings.StartTab.Tasks) {
                         tasksPageId
                     } else {
                         memosPageId

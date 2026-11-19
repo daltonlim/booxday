@@ -19,6 +19,8 @@ import com.boox.day.TAG
 import com.boox.day.data.datastore.AppSettings
 import com.boox.day.data.datastore.GlobalAppSettings
 import com.boox.day.editor.DrawCanvas
+import com.boox.day.editor.ui.TASKS_CONTROL_COLUMN_WIDTH
+import com.boox.day.ui.convertDpToPixel
 import com.boox.day.utils.logCallStack
 import com.onyx.android.sdk.api.device.epd.EpdController
 import com.onyx.android.sdk.api.device.epd.EpdController.SCHEME_NORMAL
@@ -299,7 +301,10 @@ fun setupSurface(
     // Using view width caused right-side toolbar buttons (chevrons) to not receive stylus input
     val screenWidth = view.context.resources.displayMetrics.widthPixels
 
-    // Determine the exclusion area based on toolbar position
+    val isMemosCanvas = (view as? DrawCanvas)?.isMemosCanvas ?: true
+    val controlWidthPx = if (isMemosCanvas) 0 else convertDpToPixel(TASKS_CONTROL_COLUMN_WIDTH, view.context).toInt()
+
+    // Determine the exclusion area based on toolbar position and Tasks control column
     // Use screenWidth to ensure the entire toolbar is excluded from stylus drawing capture
     val excludeRect: Rect =
         if (GlobalAppSettings.current.toolbarPosition == AppSettings.Position.Top) {
@@ -307,16 +312,21 @@ fun setupSurface(
         } else {
             Rect(0, viewHeight - toolbarHeight, screenWidth, viewHeight)
         }
+    val excludeRects = if (controlWidthPx > 0) {
+        listOf(excludeRect, Rect(0, 0, controlWidthPx, viewHeight))
+    } else {
+        listOf(excludeRect)
+    }
 
     // NOTE: Limit rect uses VIEW-RELATIVE coordinates (0,0 = top-left of view)
     // DO NOT use screen-absolute coordinates - tested and breaks stylus completely
     val limitRect =
         if (GlobalAppSettings.current.toolbarPosition == AppSettings.Position.Top)
-            Rect(0, toolbarHeight, viewWidth, viewHeight)
+            Rect(controlWidthPx, toolbarHeight, viewWidth, viewHeight)
         else
-            Rect(0, 0, viewWidth, viewHeight - toolbarHeight)
+            Rect(controlWidthPx, 0, viewWidth, viewHeight - toolbarHeight)
 
-    touchHelper.setLimitRect(mutableListOf(limitRect)).setExcludeRect(listOf(excludeRect))
+    touchHelper.setLimitRect(mutableListOf(limitRect)).setExcludeRect(excludeRects)
 
     // Only open raw drawing if startup allows it and no blocking overlay is visible.
     return if (allowRawDrawingOpen && !DrawCanvas.isCanvasInputBlockedByOverlay()) {

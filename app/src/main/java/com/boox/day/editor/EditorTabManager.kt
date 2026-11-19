@@ -43,11 +43,10 @@ class EditorTabManager(
 ) {
     // Current tab (source of truth)
     // StateFlow allows Compose to observe and recompose when tab changes
-    // FIX: Use startTab (user's preference from General Settings) instead of lastActiveTab
-    // The user sets their preferred default tab in General Settings, so we should respect it
+    // Restores the last opened Memos/Tasks tab across launches
     val currentTab = MutableStateFlow(
         run {
-            val preferredTab = GlobalAppSettings.current.startTab
+            val preferredTab = GlobalAppSettings.current.lastActiveTab
             if (preferredTab == AppSettings.StartTab.Tasks) {
                 EditorTab.Tasks
             } else {
@@ -239,12 +238,9 @@ class EditorTabManager(
         _memosEditorState.value?.mode = com.boox.day.editor.state.Mode.Draw
 
         currentTab.value = EditorTab.Memos
-        // Save to settings (async to avoid blocking tab switch)
-        coroutineScope.launch(Dispatchers.IO) {
-            kvProxy.setAppSettings(
-                GlobalAppSettings.current.copy(lastActiveTab = AppSettings.StartTab.Memos)
-            )
-        }
+        kvProxy.setAppSettings(
+            GlobalAppSettings.current.copy(lastActiveTab = AppSettings.StartTab.Memos)
+        )
         // Also update legacy StateFlow for backwards compatibility during migration
         DrawCanvas.memoModeChanged.value = true
 
@@ -286,12 +282,9 @@ class EditorTabManager(
         _tasksEditorState.value?.mode = com.boox.day.editor.state.Mode.Draw
 
         currentTab.value = EditorTab.Tasks
-        // Save to settings (async to avoid blocking tab switch)
-        coroutineScope.launch(Dispatchers.IO) {
-            kvProxy.setAppSettings(
-                GlobalAppSettings.current.copy(lastActiveTab = AppSettings.StartTab.Tasks)
-            )
-        }
+        kvProxy.setAppSettings(
+            GlobalAppSettings.current.copy(lastActiveTab = AppSettings.StartTab.Tasks)
+        )
         DrawCanvas.memoModeChanged.value = false
 
         // TOUCHHELPER FIX: Set active canvas so only Tasks TouchHelper receives pen input

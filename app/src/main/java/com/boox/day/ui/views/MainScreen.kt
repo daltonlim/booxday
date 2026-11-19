@@ -6735,7 +6735,56 @@ private fun PersistentCanvasHost(
                 EditorGestureReceiver(
                     controlTower = activeControlTower,
                     editorState = activeState,
-                    onTaskPageNav = if (currentTab == EditorTab.Tasks) onTaskPageNav else null
+                    onTaskPageNav = if (currentTab == EditorTab.Tasks) onTaskPageNav else null,
+                    onTaskRowLongPress = if (currentTab == EditorTab.Tasks) {
+                        { screenY ->
+                            val rowCount = if (tasks.isEmpty()) 10 else tasks.size
+                            val rowHeightPx = ((tasksRowsHeight.toFloat() - topOffsetPx) / rowCount).coerceAtLeast(1f)
+                            val rowIdx = ((screenY - topOffsetPx) / rowHeightPx).toInt().coerceIn(0, rowCount - 1)
+                            val task = tasks.firstOrNull { it.rowIndex == rowIdx } ?: tasks.getOrNull(rowIdx)
+                            if (task != null) {
+                                val rowBounds = com.boox.day.editor.utils.calculateRowBounds(
+                                    task.rowIndex, tasksRowsHeight.toFloat(), rowCount
+                                )
+                                val strokes = com.boox.day.data.PageDataManager.getStrokesInRectangle(
+                                    rowBounds.toRect(), tasksPageId
+                                )
+                                val hasContent = com.boox.day.editor.utils.taskRowHasContent(task, strokes, rowBounds)
+                                if (hasContent) {
+                                    openTaskCard(task)
+                                } else {
+                                    taskBeingTyped = task
+                                }
+                            }
+                        }
+                    } else null,
+                    onTaskRowHorizontalSwipe = if (currentTab == EditorTab.Tasks) {
+                        { screenY, dx ->
+                            val rowCount = if (tasks.isEmpty()) 10 else tasks.size
+                            val rowHeightPx = ((tasksRowsHeight.toFloat() - topOffsetPx) / rowCount).coerceAtLeast(1f)
+                            val rowIdx = ((screenY - topOffsetPx) / rowHeightPx).toInt().coerceIn(0, rowCount - 1)
+                            val task = tasks.firstOrNull { it.rowIndex == rowIdx } ?: tasks.getOrNull(rowIdx)
+                            if (task != null && task.rowIndex > 0) {
+                                val makeSubtask = task.parentTaskId == null
+                                val parentId = if (makeSubtask) {
+                                    tasks.sortedBy { it.rowIndex }
+                                        .lastOrNull { it.rowIndex < task.rowIndex && it.parentTaskId == null }
+                                        ?.id
+                                } else null
+                                if (!makeSubtask || parentId != null) {
+                                    scope.launch(Dispatchers.IO) {
+                                        val updated = appRepository.taskRepository.setSubtaskParent(task.id, parentId, tasksNormalHeight)
+                                        if (updated != null) {
+                                            withContext(Dispatchers.Main) {
+                                                onTasksNeedRefresh?.invoke(null)
+                                                TasksCanvasRefresh.request()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else null
                 )
                 SelectedBitmap(
                     context = context,
@@ -7015,12 +7064,33 @@ private fun PersistentCanvasHost(
                                 }
                             },
                             onReorderRow = { task, targetRow ->
-                                com.boox.day.ui.FullScreenState.exitThen {
+                                scope.launch(Dispatchers.IO) {
+                                    val moved = appRepository.taskRepository.moveTaskToRowOnPage(
+                                        task.id, targetRow, tasksNormalHeight
+                                    )
+                                    if (moved != null) {
+                                        withContext(Dispatchers.Main) {
+                                            onTasksNeedRefresh?.invoke(null)
+                                            TasksCanvasRefresh.request()
+                                        }
+                                    }
+                                }
+                            },
+                            onSetSubtask = { task, makeSubtask ->
+                                val parentId = if (makeSubtask) {
+                                    tasks.sortedBy { it.rowIndex }
+                                        .lastOrNull { it.rowIndex < task.rowIndex && it.parentTaskId == null && taskHasInteractiveContent(it) }
+                                        ?.id
+                                        ?: tasks.sortedBy { it.rowIndex }
+                                            .lastOrNull { it.rowIndex < task.rowIndex && it.parentTaskId == null }
+                                            ?.id
+                                } else {
+                                    null
+                                }
+                                if ((!makeSubtask || parentId != null) && (makeSubtask || task.parentTaskId != null)) {
                                     scope.launch(Dispatchers.IO) {
-                                        val moved = appRepository.taskRepository.moveTaskToRowOnPage(
-                                            task.id, targetRow, tasksNormalHeight
-                                        )
-                                        if (moved != null) {
+                                        val updated = appRepository.taskRepository.setSubtaskParent(task.id, parentId, tasksNormalHeight)
+                                        if (updated != null) {
                                             withContext(Dispatchers.Main) {
                                                 onTasksNeedRefresh?.invoke(null)
                                                 TasksCanvasRefresh.request()
@@ -7297,60 +7367,52 @@ private fun PersistentCanvasHost(
                         },
                         totalRows = tasks.size.coerceAtLeast(10),
                         onMoveUp = {
-                            com.boox.day.ui.FullScreenState.exitThen {
-                                scope.launch(Dispatchers.IO) {
-                                    val moved = appRepository.taskRepository.moveTaskByRowDelta(cardTask.id, -1, tasksNormalHeight)
-                                    if (moved != null) {
-                                        withContext(Dispatchers.Main) {
-                                            onTasksNeedRefresh?.invoke(null)
-                                            refreshTaskCard(moved)
-                                            TasksCanvasRefresh.request()
-                                        }
+                            scope.launch(Dispatchers.IO) {
+                                val moved = appRepository.taskRepository.moveTaskByRowDelta(cardTask.id, -1, tasksNormalHeight)
+                                if (moved != null) {
+                                    withContext(Dispatchers.Main) {
+                                        onTasksNeedRefresh?.invoke(null)
+                                        refreshTaskCard(moved)
+                                        TasksCanvasRefresh.request()
                                     }
                                 }
                             }
                         },
                         onMoveDown = {
-                            com.boox.day.ui.FullScreenState.exitThen {
-                                scope.launch(Dispatchers.IO) {
-                                    val moved = appRepository.taskRepository.moveTaskByRowDelta(cardTask.id, 1, tasksNormalHeight)
-                                    if (moved != null) {
-                                        withContext(Dispatchers.Main) {
-                                            onTasksNeedRefresh?.invoke(null)
-                                            refreshTaskCard(moved)
-                                            TasksCanvasRefresh.request()
-                                        }
+                            scope.launch(Dispatchers.IO) {
+                                val moved = appRepository.taskRepository.moveTaskByRowDelta(cardTask.id, 1, tasksNormalHeight)
+                                if (moved != null) {
+                                    withContext(Dispatchers.Main) {
+                                        onTasksNeedRefresh?.invoke(null)
+                                        refreshTaskCard(moved)
+                                        TasksCanvasRefresh.request()
                                     }
                                 }
                             }
                         },
                         onMoveToRow = { targetRow ->
-                            com.boox.day.ui.FullScreenState.exitThen {
-                                scope.launch(Dispatchers.IO) {
-                                    val moved = appRepository.taskRepository.moveTaskToRowOnPage(cardTask.id, targetRow, tasksNormalHeight)
-                                    if (moved != null) {
-                                        withContext(Dispatchers.Main) {
-                                            onTasksNeedRefresh?.invoke(null)
-                                            refreshTaskCard(moved)
-                                            TasksCanvasRefresh.request()
-                                        }
+                            scope.launch(Dispatchers.IO) {
+                                val moved = appRepository.taskRepository.moveTaskToRowOnPage(cardTask.id, targetRow, tasksNormalHeight)
+                                if (moved != null) {
+                                    withContext(Dispatchers.Main) {
+                                        onTasksNeedRefresh?.invoke(null)
+                                        refreshTaskCard(moved)
+                                        TasksCanvasRefresh.request()
                                     }
                                 }
                             }
                         },
                         onAddTypedSubtask = if (cardTask.parentTaskId == null) {
                             { subtaskText ->
-                                com.boox.day.ui.FullScreenState.exitThen {
-                                    scope.launch(Dispatchers.IO) {
-                                        val added = appRepository.taskRepository.addSubtaskUnderParent(
-                                            cardTask.id, subtaskText, tasksNormalHeight
-                                        )
-                                        if (added != null) {
-                                            withContext(Dispatchers.Main) {
-                                                onTasksNeedRefresh?.invoke(added.taskPageIndex.takeIf { it != cardTask.taskPageIndex })
-                                                refreshTaskCard(cardTask)
-                                                TasksCanvasRefresh.request()
-                                            }
+                                scope.launch(Dispatchers.IO) {
+                                    val added = appRepository.taskRepository.addSubtaskUnderParent(
+                                        cardTask.id, subtaskText, tasksNormalHeight
+                                    )
+                                    if (added != null) {
+                                        withContext(Dispatchers.Main) {
+                                            onTasksNeedRefresh?.invoke(added.taskPageIndex.takeIf { it != cardTask.taskPageIndex })
+                                            refreshTaskCard(cardTask)
+                                            TasksCanvasRefresh.request()
                                         }
                                     }
                                 }
@@ -7359,22 +7421,20 @@ private fun PersistentCanvasHost(
                         onAddHandwrittenSubtask = if (cardTask.parentTaskId == null) {
                             {
                                 taskCard = null
-                                com.boox.day.ui.FullScreenState.exitThen {
-                                    scope.launch(Dispatchers.IO) {
-                                        val added = appRepository.taskRepository.addSubtaskUnderParent(
-                                            cardTask.id, null, tasksNormalHeight
-                                        )
-                                        if (added != null) {
-                                            withContext(Dispatchers.Main) {
-                                                onTasksNeedRefresh?.invoke(added.taskPageIndex.takeIf { it != cardTask.taskPageIndex })
-                                                TasksCanvasRefresh.request()
-                                                snackManager.displaySnack(
-                                                    SnackConf(
-                                                        text = "Subtask row added on Row ${added.rowIndex + 1}",
-                                                        duration = SnackConf.DURATION_QUICK
-                                                    )
+                                scope.launch(Dispatchers.IO) {
+                                    val added = appRepository.taskRepository.addSubtaskUnderParent(
+                                        cardTask.id, null, tasksNormalHeight
+                                    )
+                                    if (added != null) {
+                                        withContext(Dispatchers.Main) {
+                                            onTasksNeedRefresh?.invoke(added.taskPageIndex.takeIf { it != cardTask.taskPageIndex })
+                                            TasksCanvasRefresh.request()
+                                            snackManager.displaySnack(
+                                                SnackConf(
+                                                    text = "Subtask row added on Row ${added.rowIndex + 1}",
+                                                    duration = SnackConf.DURATION_QUICK
                                                 )
-                                            }
+                                            )
                                         }
                                     }
                                 }
@@ -7395,7 +7455,7 @@ private fun PersistentCanvasHost(
                             if (cardTask.parentTaskId != null || aboveParentId != null) {
                                 {
                                     scope.launch(Dispatchers.IO) {
-                                        val updated = appRepository.taskRepository.setSubtaskParent(cardTask.id, aboveParentId)
+                                        val updated = appRepository.taskRepository.setSubtaskParent(cardTask.id, aboveParentId, tasksNormalHeight)
                                         if (updated != null) {
                                             withContext(Dispatchers.Main) {
                                                 onTasksNeedRefresh?.invoke(null)

@@ -5470,12 +5470,13 @@ class TaskRepository(internal val context: Context) {
         canvasHeight: Float,
         priorityAssignments: Map<String, String> = emptyMap()
     ): Boolean {
-        // Full screen Tasks (Oct 2026): this works on pages of 10; the tools calling it leave full screen first
-        if (TaskPagination.isReflowed(date)) {
-            Log.w(TAG, "Not reordering $date: its Tasks are on full screen pages")
-            return false
-        }
         if (items.isEmpty()) return true
+        val rowsPerPage = TaskPagination.rowsPerPage(date)
+        val effectiveHeight = if (TaskPagination.isReflowed(date)) {
+            TaskPagination.rowsHeight(canvasHeight, rowsPerPage, com.boox.day.editor.utils.tasksTopOffset())
+        } else {
+            canvasHeight
+        }
 
         // T5 (Oct 2026): one transaction; every content column carried; ink deleted by ID from
         // the DB even for pages that aren't in memory (no duplicates); reminders re-scheduled;
@@ -5513,8 +5514,9 @@ class TaskRepository(internal val context: Context) {
                 }
                 fun strokesInRowOf(task: Task): List<Stroke> = extractStrokesForRow(
                     strokesOnPage(task.pageId),
-                    calculateRowBounds(task.rowIndex, canvasHeight, 10),
-                    canvasHeight
+                    calculateRowBounds(task.rowIndex, effectiveHeight, rowsPerPage),
+                    effectiveHeight,
+                    rowCount = rowsPerPage
                 )
 
                 val migratedStrokesToInsert = mutableListOf<Stroke>()
@@ -5537,8 +5539,8 @@ class TaskRepository(internal val context: Context) {
                         migratedStrokesToInsert.addAll(
                             createMigratedStrokes(
                                 sourceStrokes = strokesInRow,
-                                sourceRowBounds = calculateRowBounds(sourceTask.rowIndex, canvasHeight, 10),
-                                targetRowBounds = calculateRowBounds(item.targetRowIndex, canvasHeight, 10),
+                                sourceRowBounds = calculateRowBounds(sourceTask.rowIndex, effectiveHeight, rowsPerPage),
+                                targetRowBounds = calculateRowBounds(item.targetRowIndex, effectiveHeight, rowsPerPage),
                                 targetPageId = targetTask.pageId
                             )
                         )
@@ -5782,10 +5784,45 @@ class TaskRepository(internal val context: Context) {
 
     /**
      * Link or unlink [taskId] as a subtask of [parentTaskId] (null promotes it to a standalone task).
+     * When [canvasHeight] > 0, shifts handwritten strokes in that row horizontally (+24dp to indent,
+     * -24dp to unindent) so handwritten subtasks also visually indent and unindent.
      */
-    fun setSubtaskParent(taskId: String, parentTaskId: String?): Task? {
+    fun setSubtaskParent(taskId: String, parentTaskId: String?, canvasHeight: Float = 0f): Task? {
         val task = taskDao.getById(taskId) ?: return null
+        val wasSubtask = task.parentTaskId != null
+        val willBeSubtask = parentTaskId != null
         taskDao.setParentTask(taskId, parentTaskId)
+
+        if (canvasHeight > 0f && wasSubtask != willBeSubtask) {
+            val rowsPerPage = TaskPagination.rowsPerPage(task.dayDate)
+            val effectiveHeight = if (TaskPagination.isReflowed(task.dayDate)) {
+                TaskPagination.rowsHeight(canvasHeight, rowsPerPage, com.boox.day.editor.utils.tasksTopOffset())
+            } else {
+                canvasHeight
+            }
+            val indentPx = 24f * (context.resources.displayMetrics.density)
+            val dx = if (willBeSubtask) indentPx else -indentPx
+            val strokeRepository = StrokeRepository(context)
+            val allStrokes = PageDataManager.getStrokesInRectangle(
+                Rect(0, 0, Int.MAX_VALUE, Int.MAX_VALUE),
+                task.pageId
+            ) ?: strokeRepository.getAllForPage(task.pageId)
+            val rowBounds = calculateRowBounds(task.rowIndex, effectiveHeight, rowsPerPage)
+            val rowStrokes = extractStrokesForRow(allStrokes, rowBounds, effectiveHeight, rowCount = rowsPerPage)
+            if (rowStrokes.isNotEmpty()) {
+                val minX = com.boox.day.ui.convertDpToPixel(com.boox.day.editor.ui.TASKS_CONTROL_COLUMN_WIDTH, context)
+                val shifted = rowStrokes.map { s ->
+                    val clampedDx = if (s.left + dx < minX) minX - s.left else dx
+                    com.boox.day.editor.utils.offsetStroke(s, androidx.compose.ui.geometry.Offset(clampedDx, 0f))
+                }
+                val oldIds = rowStrokes.map { it.id }
+                strokeRepository.deleteByIdsOnPage(task.pageId, oldIds)
+                strokeRepository.create(shifted)
+                PageDataManager.removeStrokes(oldIds, task.pageId)
+                PageDataManager.addStrokes(shifted, task.pageId)
+            }
+        }
+
         invalidateTaskCache(task.dayDate)
         _taskChanged.tryEmit(task.dayDate)
         return taskDao.getById(taskId)

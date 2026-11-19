@@ -745,6 +745,10 @@ class DrawCanvas(
         // - pen : `onBeginRawDrawing()` -> `onRawDrawingTouchPointMoveReceived()` -> `onRawDrawingTouchPointListReceived()` -> `onEndRawDrawing()`
 
         if (PERF_LOGS) log.i("RAW_IN[${canvasOwnerId()}]: onRawDrawingTouchPointListReceived - isDrawing=${state.isDrawing}, inputBlocked=${isCanvasInputBlockedByOverlay()}, eventsOverlayExpanded=${eventsOverlayExpanded.value}")
+        if (!isMemosCanvas) {
+            val minX = convertDpToPixel(TASKS_CONTROL_COLUMN_WIDTH, context)
+            plist.points.removeAll { it.x < minX }
+        }
         if (plist.points.isEmpty()) {
             if (PERF_LOGS) log.w("RAW_IN[${canvasOwnerId()}]: onRawDrawingTouchPointListReceived empty list - skipping")
             return
@@ -1682,8 +1686,13 @@ class DrawCanvas(
                                     else Rect(0, 0, viewWidth, viewHeight - toolbarHeight)
                                 }
                                 val canvasName = if (isMemosCanvas) "Memos" else "Tasks"
+                                val excludeRects = if (!isMemosCanvas) {
+                                    listOf(excludeRect, Rect(0, 0, controlWidthPx, viewHeight))
+                                } else {
+                                    listOf(excludeRect)
+                                }
                                 log.i("LIMIT_RECT_FIX[$canvasName]: forceUpdate setting limitRect=$limitRect before openRawDrawing")
-                                touchHelper.setLimitRect(mutableListOf(limitRect)).setExcludeRect(listOf(excludeRect))
+                                touchHelper.setLimitRect(mutableListOf(limitRect)).setExcludeRect(excludeRects)
 
                                 // Part 3: Reopen raw drawing to capture fresh framebuffer
                                 touchHelper.openRawDrawing()
@@ -2599,8 +2608,13 @@ class DrawCanvas(
 
                     // Step 3: Set new limit/exclude rects (will be applied on next open)
                     opId = nextOpId()
-                    if (PERF_LOGS) log.i("TOUCH_TRACE[$canvasName]: [$opId] Calling setLimitRect($limitRect) & setExcludeRect($excludeRect)")
-                    touchHelper.setLimitRect(mutableListOf(limitRect)).setExcludeRect(listOf(excludeRect))
+                    val excludeRects = if (!isMemosCanvas) {
+                        listOf(excludeRect, Rect(0, 0, controlWidthPx, viewHeight))
+                    } else {
+                        listOf(excludeRect)
+                    }
+                    if (PERF_LOGS) log.i("TOUCH_TRACE[$canvasName]: [$opId] Calling setLimitRect($limitRect) & setExcludeRect($excludeRects)")
+                    touchHelper.setLimitRect(mutableListOf(limitRect)).setExcludeRect(excludeRects)
                     if (PERF_LOGS) log.i("TOUCH_TRACE[$canvasName]: [$opId] setLimitRect/setExcludeRect completed")
 
                     // Step 4: Open fresh session - limit rect is applied HERE

@@ -53,6 +53,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import com.boox.day.R
@@ -119,12 +120,11 @@ fun TasksControlColumn(
     onChevronLongPress: (Task) -> Unit,
     onLongPressRow: (Task) -> Unit,
     onReorderRow: ((Task, Int) -> Unit)? = null,
+    onSetSubtask: ((Task, Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var columnHeightPx by remember { mutableStateOf(0) }
     var dragTargetRow by remember { mutableStateOf<Int?>(null) }
-    val borderColor = EInkTheme.TasksTab.controlColumnBorderColor
-    val borderWidthDp = EInkTheme.TasksTab.controlColumnBorderWidth
     Column(
         modifier = modifier
             .width(TASKS_CONTROL_COLUMN_WIDTH)
@@ -139,32 +139,22 @@ fun TasksControlColumn(
             // key() provides stable identity to reduce unnecessary recomposition
             key(task.id) {
                 val hasContent = taskHasContent(task)
+                val isSubtask = task.parentTaskId != null
                 val rowHeightPx = if (tasks.isNotEmpty() && columnHeightPx > 0) {
                     (columnHeightPx.toFloat() / tasks.size).coerceAtLeast(1f)
                 } else 0f
-                // Use extracted, stable composable to skip recomposition
                 TaskControlRow(
                     isCompleted = task.isCompleted,
-                    isSubtask = task.parentTaskId != null,
+                    isSubtask = isSubtask,
                     dueDay = task.dueDay,
                     hasContent = hasContent,
                     rowIndex = index,
                     totalRows = tasks.size,
                     isDragTarget = dragTargetRow == index,
                     onCheckboxToggle = { onCheckboxToggle(task) },
-                    onCheckboxLongPress = onCheckboxLongPress,
-                    onMoveUp = if (onReorderRow != null && hasContent && index > 0) {
-                        { onReorderRow(task, index - 1) }
-                    } else null,
-                    onMoveDown = if (onReorderRow != null && hasContent && index < tasks.lastIndex) {
-                        { onReorderRow(task, index + 1) }
-                    } else null,
-                    onDueDateTap = { onDueDateTap(task) },
-                    onChevronTap = { onChevronTap(task) },
-                    onChevronLongPress = { onChevronLongPress(task) },
-                    onLongPressRow = { onLongPressRow(task) },
-                    onChevronVerticalDrag = if (onReorderRow != null && hasContent && rowHeightPx > 0f) {
-                        { totalDy, finished ->
+                    onOpenMenu = { onChevronTap(task) },
+                    onHandleGesture = { totalDx, totalDy, finished ->
+                        if (abs(totalDy) >= abs(totalDx) && rowHeightPx > 0f && onReorderRow != null && hasContent) {
                             val target = (index + (totalDy / rowHeightPx).roundToInt()).coerceIn(0, tasks.lastIndex)
                             if (finished) {
                                 dragTargetRow = null
@@ -172,8 +162,15 @@ fun TasksControlColumn(
                             } else {
                                 dragTargetRow = target
                             }
+                        } else if (finished) {
+                            dragTargetRow = null
+                            if (abs(totalDx) > abs(totalDy) && onSetSubtask != null && index > 0) {
+                                // Swipe right (or left) on a main task makes it a subtask;
+                                // swipe left (or right) on a subtask turns it back into a main task
+                                onSetSubtask(task, !isSubtask)
+                            }
                         }
-                    } else null,
+                    },
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -182,10 +179,11 @@ fun TasksControlColumn(
 }
 
 /**
- * Extracted row composable with stable parameters to enable skipping recomposition.
- * The Task object itself is unstable due to Date fields, so we pass primitives.
- *
- * Due dates are always enabled (no longer a user preference).
+ * Extracted row composable with Google Keep style 6-dot drag handle on the left of the checkbox:
+ * - Pull Up / Down: reorder task row
+ * - Swipe Right / Left: indent as subtask or unindent back to main task
+ * - Tap checkbox: toggle completion
+ * - Long-press row: open task menu (or type dialog if empty)
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -198,16 +196,14 @@ private fun TaskControlRow(
     totalRows: Int,
     isDragTarget: Boolean = false,
     onCheckboxToggle: () -> Unit,
-    onCheckboxLongPress: () -> Unit,
-    onMoveUp: (() -> Unit)?,
-    onMoveDown: (() -> Unit)?,
-    onDueDateTap: () -> Unit,
-    onChevronTap: () -> Unit,
-    onChevronLongPress: () -> Unit,
-    onLongPressRow: () -> Unit,
-    onChevronVerticalDrag: ((totalDy: Float, finished: Boolean) -> Unit)? = null,
+    onOpenMenu: () -> Unit,
+    onHandleGesture: (totalDx: Float, totalDy: Float, finished: Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val currentOnCheckboxToggle by rememberUpdatedState(onCheckboxToggle)
+    val currentOnOpenMenu by rememberUpdatedState(onOpenMenu)
+    val currentOnHandleGesture by rememberUpdatedState(onHandleGesture)
+
     Column(
         modifier = modifier.then(
             if (isDragTarget) Modifier.border(2.dp, EInkTheme.Colors.primary) else Modifier
@@ -217,149 +213,115 @@ private fun TaskControlRow(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .combinedClickable(
-                    // No ripple on e-ink (plan T3 / 13.3)
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = { /* Regular tap does nothing on the row background */ },
-                    onLongClick = {
-                        // Long press clears the slot (if has content)
-                        if (hasContent) {
-                            onLongPressRow()
-                        }
-                    }
-                )
-                .then(
-                    if (isSubtask) {
-                        Modifier.drawBehind {
-                            val lineX = 3.dp.toPx()
-                            drawLine(
-                                color = EInkTheme.TasksTab.Subtask.textColor,
-                                start = Offset(lineX, 0f),
-                                end = Offset(lineX, size.height),
-                                strokeWidth = 2.5.dp.toPx()
-                            )
-                        }
-                    } else Modifier
-                )
-                .padding(
-                    start = if (isSubtask) 6.dp else 2.dp,
-                    end = 0.dp
-                ),
-            verticalAlignment = Alignment.CenterVertically,
-            // Use manual spacers for custom gaps
-            horizontalArrangement = Arrangement.Start
-        ) {
-            // E-Ink Checkbox
-            // Tap: toggle single task | Long-press: toggle all tasks on page
-            EInkCheckbox(
-                checked = isCompleted,
-                onCheckedChange = { onCheckboxToggle() },
-                onLongPress = { onCheckboxLongPress() },
-                touchSize = 34.dp,
-                iconSize = EInkTheme.TasksTab.checkboxIconCompact
-            )
-
-            Spacer(modifier = Modifier.width(2.dp))
-
-            val isCompactProfile = LayoutProfiles.isNarrowScreen
-            val currentOnMoveUp by rememberUpdatedState(onMoveUp)
-            val currentOnMoveDown by rememberUpdatedState(onMoveDown)
-            val canUp = hasContent && rowIndex > 0 && currentOnMoveUp != null
-            val canDown = hasContent && rowIndex < totalRows - 1 && currentOnMoveDown != null
-
-            EInkReorderIconButton(
-                icon = Icons.Default.KeyboardArrowUp,
-                contentDescription = "Move task up",
-                enabled = canUp,
-                onClick = { currentOnMoveUp?.invoke() }
-            )
-
-            Spacer(modifier = Modifier.width(2.dp))
-
-            EInkReorderIconButton(
-                icon = Icons.Default.KeyboardArrowDown,
-                contentDescription = "Move task down",
-                enabled = canDown,
-                onClick = { currentOnMoveDown?.invoke() }
-            )
-
-            if (!isCompactProfile) {
-                // Due Date button (always shown on regular tablets)
-                Spacer(modifier = Modifier.width(2.dp))
-
-                EInkDueDateButton(
-                    dueDay = dueDay,
-                    isCompleted = isCompleted,
-                    onClick = onDueDateTap
-                )
-            }
-
-            Spacer(modifier = Modifier.width(2.dp))
-
-            // Chevron button (right) - E-Ink optimized (no ripple)
-            val currentOnChevronTap by rememberUpdatedState(onChevronTap)
-            val currentOnChevronLongPress by rememberUpdatedState(onChevronLongPress)
-            val currentOnChevronVerticalDrag by rememberUpdatedState(onChevronVerticalDrag)
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .pointerInput(Unit) {
-                        val dragSlop = viewConfiguration.touchSlop
-                        val longPressMs = viewConfiguration.longPressTimeoutMillis
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            down.consume()
-                            val downTime = System.currentTimeMillis()
-                            var totalDy = 0f
-                            var dragging = false
-                            var longPressed = false
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                if (!change.pressed) {
-                                    change.consume()
-                                    break
-                                }
-                                val dy = change.position.y - change.previousPosition.y
-                                totalDy += dy
-                                if (!dragging && abs(totalDy) > dragSlop && currentOnChevronVerticalDrag != null) {
-                                    dragging = true
-                                }
-                                if (dragging) {
-                                    change.consume()
-                                    currentOnChevronVerticalDrag?.invoke(totalDy, false)
-                                } else if (!longPressed && System.currentTimeMillis() - downTime >= longPressMs) {
+                .pointerInput(Unit) {
+                    val dragSlop = viewConfiguration.touchSlop * 0.6f
+                    val longPressMs = 450L
+                    val handleWidthPx = 28.dp.toPx()
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        val startedOnCheckbox = down.position.x >= handleWidthPx
+                        val downTime = System.currentTimeMillis()
+                        var totalDx = 0f
+                        var totalDy = 0f
+                        var dragging = false
+                        var longPressed = false
+                        while (true) {
+                            val event = withTimeoutOrNull(50L) { awaitPointerEvent() }
+                            if (event == null) {
+                                if (!dragging && !longPressed && System.currentTimeMillis() - downTime >= longPressMs) {
                                     longPressed = true
-                                    currentOnChevronLongPress()
+                                    currentOnOpenMenu()
                                 }
+                                continue
+                            }
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) {
+                                change.consume()
+                                break
+                            }
+                            totalDx += change.position.x - change.previousPosition.x
+                            totalDy += change.position.y - change.previousPosition.y
+                            if (!dragging && (abs(totalDx) > dragSlop || abs(totalDy) > dragSlop)) {
+                                dragging = true
                             }
                             if (dragging) {
-                                currentOnChevronVerticalDrag?.invoke(totalDy, true)
-                            } else if (!longPressed) {
-                                currentOnChevronTap()
+                                change.consume()
+                                currentOnHandleGesture(totalDx, totalDy, false)
+                            } else if (!longPressed && System.currentTimeMillis() - downTime >= longPressMs) {
+                                longPressed = true
+                                currentOnOpenMenu()
                             }
                         }
-                    },
+                        if (dragging) {
+                            currentOnHandleGesture(totalDx, totalDy, true)
+                        } else if (!longPressed) {
+                            if (startedOnCheckbox && hasContent) {
+                                currentOnCheckboxToggle()
+                            } else {
+                                currentOnOpenMenu()
+                            }
+                        }
+                    }
+                }
+                .padding(
+                    start = if (isSubtask) 24.dp else 2.dp,
+                    end = 2.dp
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Start
+        ) {
+            // Google Keep style 6-dot drag handle on the LEFT of the checkbox
+            Box(
+                modifier = Modifier
+                    .width(24.dp)
+                    .fillMaxHeight()
+                    .drawBehind {
+                        val dotColor = if (hasContent) EInkTheme.Colors.primary else EInkTheme.Colors.lightGray
+                        val dotRadius = 1.8.dp.toPx()
+                        val colGap = 6.dp.toPx()
+                        val rowGap = 6.dp.toPx()
+                        val cx = size.width / 2f
+                        val cy = size.height / 2f
+                        for (r in -1..1) {
+                            for (c in listOf(-0.5f, 0.5f)) {
+                                drawCircle(
+                                    color = dotColor,
+                                    radius = dotRadius,
+                                    center = Offset(cx + c * colGap, cy + r * rowGap)
+                                )
+                            }
+                        }
+                    }
+            )
+
+            // E-Ink Checkbox visual (interactions handled by the row's unified gesture detector above)
+            Box(
+                modifier = Modifier.size(36.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = if (hasContent) "Move task" else "Type task",
-                    tint = EInkTheme.Colors.primary,
-                    modifier = Modifier.size(26.dp)
-                )
-                if (isCompactProfile && dueDay != null) {
-                    val isOverdue = TaskDueDates.isOverdue(dueDay, isCompleted)
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .size(6.dp)
-                            .background(
-                                if (isOverdue) EInkTheme.Colors.red else EInkTheme.Colors.primary,
-                                CircleShape
-                            )
-                    )
+                Box(
+                    modifier = Modifier
+                        .size(EInkTheme.TasksTab.checkboxIconCompact)
+                        .background(
+                            color = if (isCompleted) EInkTheme.Checkbox.checkedBackground else EInkTheme.Colors.white,
+                            shape = RoundedCornerShape(4.dp)
+                        )
+                        .border(
+                            width = EInkTheme.Checkbox.borderWidth,
+                            color = EInkTheme.Checkbox.borderColor,
+                            shape = RoundedCornerShape(4.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isCompleted) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = EInkTheme.Checkbox.checkmarkColor,
+                            modifier = Modifier.size((EInkTheme.TasksTab.checkboxIconCompact.value * 0.7f).dp)
+                        )
+                    }
                 }
             }
         }

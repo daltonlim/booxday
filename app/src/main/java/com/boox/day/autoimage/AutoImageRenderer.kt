@@ -100,7 +100,7 @@ object AutoImageRenderer {
 
                 val rowStrokes = content.strokes.filter { stroke ->
                     val midY = (stroke.top + stroke.bottom) / 2f
-                    midY in rowTop..rowBottom
+                    midY >= rowTop && midY < rowBottom
                 }
                 if (rowStrokes.isNotEmpty()) {
                     val minLeft = rowStrokes.minOf { it.left }

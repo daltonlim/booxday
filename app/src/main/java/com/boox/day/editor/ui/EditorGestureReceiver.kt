@@ -17,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -79,8 +80,12 @@ private val log = TaggedLog("GestureReceiver")
 fun EditorGestureReceiver(
     controlTower: EditorControlTower,
     editorState: EditorState? = null,
-    onTaskPageNav: ((Int) -> Unit)? = null
+    onTaskPageNav: ((Int) -> Unit)? = null,
+    onTaskRowLongPress: ((Float) -> Unit)? = null,
+    onTaskRowHorizontalSwipe: ((Float, Float) -> Unit)? = null
 ) {
+    val currentOnTaskRowLongPress by rememberUpdatedState(onTaskRowLongPress)
+    val currentOnTaskRowHorizontalSwipe by rememberUpdatedState(onTaskRowHorizontalSwipe)
 
     val coroutineScope = rememberCoroutineScope()
     val appSettings = remember { GlobalAppSettings.current }
@@ -171,9 +176,11 @@ fun EditorGestureReceiver(
                         var dragTried = false
 
                         do {
+                            val isTasksMode = !DrawCanvas.memoModeChanged.value && currentOnTaskRowLongPress != null
+                            val holdTimeoutMs = if (isTasksMode) 450L else HOLD_THRESHOLD_MS.toLong()
                             // wait for second gesture
                             val event =
-                                withTimeoutOrNull(HOLD_THRESHOLD_MS.toLong()) { awaitPointerEvent() }
+                                withTimeoutOrNull(holdTimeoutMs) { awaitPointerEvent() }
                             if (!coroutineScope.isActive) return@awaitEachGesture
                             // if window lost focus, ignore input
                             if (!view.hasWindowFocus()) return@awaitEachGesture
@@ -226,10 +233,24 @@ fun EditorGestureReceiver(
                                 crossPosition = gestureState.getLastPositionIO()
                                 rectangleBounds = gestureState.calculateRectangleBounds()
                             } else {
+                                val onMemos = DrawCanvas.memoModeChanged.value
+                                val isTaskRowHold = !onMemos &&
+                                    currentOnTaskRowLongPress != null &&
+                                    gestureState.getElapsedTime() >= 450L &&
+                                    gestureState.getInputCount() == 1 &&
+                                    tracker.totalTravel() < 25f &&
+                                    !DrawCanvas.isStylusRecentlyActive()
+                                if (isTaskRowHold) {
+                                    val holdPosition = gestureState.getLastPositionIO()
+                                    if (holdPosition != null) {
+                                        currentOnTaskRowLongPress?.invoke(holdPosition.y.toFloat())
+                                        return@awaitEachGesture
+                                    }
+                                }
                                     // set selection mode
                                 // ⚠️ STYLUS GUARD (Dec 2025): Skip hold detection if stylus was recently active
                                 // This prevents palm touches during writing from triggering selection mode.
-                                if (gestureState.isHoldingOneFinger() && !DrawCanvas.isStylusRecentlyActive()) {
+                                if (onMemos && gestureState.isHoldingOneFinger() && !DrawCanvas.isStylusRecentlyActive()) {
                                     val holdPosition = gestureState.getLastPositionIO()
                                     if (holdPosition != null) {
                                         val holdOffset = Offset(holdPosition.x.toFloat(), holdPosition.y.toFloat())
@@ -283,7 +304,6 @@ fun EditorGestureReceiver(
                                     rectangleBounds = gestureState.calculateRectangleBounds()
                                     showHint("Selection mode!", coroutineScope, 1500)
                                 }
-                                val onMemos = DrawCanvas.memoModeChanged.value
                                 if (!onMemos) {
                                     gestureState.checkSmoothScrolling()
                                 }
@@ -515,7 +535,13 @@ fun EditorGestureReceiver(
 
 
                         if (gestureState.gestureMode == GestureMode.Normal) {
-                            if (horizontalDrag < -SWIPE_THRESHOLD)
+                            val isTasksCanvas = !DrawCanvas.memoModeChanged.value
+                            if (isTasksCanvas && currentOnTaskRowHorizontalSwipe != null && abs(horizontalDrag) > 50 && gestureState.getInputCount() == 1) {
+                                val startY = gestureState.getFirstPosition()?.y?.toFloat()
+                                if (startY != null) {
+                                    currentOnTaskRowHorizontalSwipe?.invoke(startY, horizontalDrag.toFloat())
+                                }
+                            } else if (horizontalDrag < -SWIPE_THRESHOLD)
                                 resolveGesture(
                                     settings = appSettings,
                                     default = if (gestureState.getInputCount() == 1) AppSettings.defaultSwipeLeftAction else AppSettings.defaultTwoFingerSwipeLeftAction,
@@ -533,7 +559,7 @@ fun EditorGestureReceiver(
                                     controlTower = controlTower,
                                     onTaskPageNav = onTaskPageNav
                                 )
-                            else if (!DrawCanvas.memoModeChanged.value && onTaskPageNav != null && abs(verticalDrag) > 100f) {
+                            else if (isTasksCanvas && onTaskPageNav != null && abs(verticalDrag) > 100f) {
                                 onTaskPageNav(if (verticalDrag < 0f) 1 else -1)
                             }
                         }
